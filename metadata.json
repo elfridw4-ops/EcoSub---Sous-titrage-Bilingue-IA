@@ -1,0 +1,5 @@
+{
+  "name": "EcoSub - Sous-titrage Bilingue IA",
+  "description": "Application de génération automatique de sous-titres bilingues (FR/EN) avec incrustation vidéo par IA.",
+  "requestFramePermissions": []
+}
