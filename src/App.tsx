@@ -2,10 +2,13 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Video, CheckCircle, Loader2, Download, Languages, Play, Key, LogIn, LogOut, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from '@google/genai';
-import { auth, signInWithGoogle, logout } from './firebase';
+import { auth, signInWithGoogle, logout, db } from './firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { doc, getDoc, setDoc, updateDoc, arrayUnion, onSnapshot } from 'firebase/firestore';
 
 const ADMIN_EMAIL = 'elfridw4@gmail.com';
+const DAILY_LIMIT = 3;
+const WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
@@ -16,6 +19,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [usage, setUsage] = useState<{ generations: string[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auth listener
@@ -27,8 +31,54 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Usage listener
+  useEffect(() => {
+    if (!user) {
+      setUsage(null);
+      return;
+    }
+
+    const userRef = doc(db, 'users', user.uid);
+    const unsubscribe = onSnapshot(userRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setUsage(docSnap.data() as { generations: string[] });
+      } else {
+        // Initialize user doc if it doesn't exist
+        setDoc(userRef, { generations: [], email: user.email });
+      }
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
   const isAdmin = user?.email === ADMIN_EMAIL;
-  const activeApiKey = isAdmin ? (process.env.GEMINI_API_KEY || apiKey) : apiKey;
+  
+  // Logic: All authenticated users get to use the system key, but limited.
+  // Unauthenticated users must provide their own key (or login).
+  const canUseSystemKey = !!user;
+  const activeApiKey = (canUseSystemKey && process.env.GEMINI_API_KEY) ? process.env.GEMINI_API_KEY : apiKey;
+
+  const getRecentGenerations = () => {
+    if (!usage) return [];
+    const now = Date.now();
+    return usage.generations.filter(ts => (now - new Date(ts).getTime()) < WINDOW_MS);
+  };
+
+  const recentGenerations = getRecentGenerations();
+  const remainingCredits = isAdmin ? Infinity : Math.max(0, DAILY_LIMIT - recentGenerations.length);
+  const isLimitReached = !isAdmin && remainingCredits <= 0;
+
+  const getWaitTime = () => {
+    if (recentGenerations.length === 0) return null;
+    const oldestTs = new Date(recentGenerations[0]).getTime();
+    const nextAvailable = oldestTs + WINDOW_MS;
+    const diff = nextAvailable - Date.now();
+    if (diff <= 0) return "Maintenant";
+    
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    return `${hours}h ${minutes}m`;
+  };
 
   // Persist API Key
   useEffect(() => {
@@ -79,8 +129,14 @@ export default function App() {
 
   const processVideo = async () => {
     if (!file) return;
+    
     if (!activeApiKey) {
-      setError("Veuillez entrer votre clé API Gemini pour continuer.");
+      setError("Veuillez vous connecter ou entrer votre clé API Gemini pour continuer.");
+      return;
+    }
+
+    if (isLimitReached) {
+      setError(`Limite atteinte. Prochain crédit disponible dans ${getWaitTime()}.`);
       return;
     }
 
@@ -175,6 +231,14 @@ export default function App() {
         throw new Error(errorMessage);
       }
       const { downloadUrl } = await burnRes.json();
+
+      // 4. Update usage in Firestore if using system key
+      if (user && !isAdmin) {
+        const userRef = doc(db, 'users', user.uid);
+        await updateDoc(userRef, {
+          generations: arrayUnion(new Date().toISOString())
+        });
+      }
 
       setResultUrl(downloadUrl);
       setStatus('done');
@@ -278,29 +342,95 @@ export default function App() {
                     exit={{ opacity: 0, y: -10 }}
                     className="text-center space-y-6"
                   >
-                    {/* API Key Input - Only show if not admin */}
-                    {!isAdmin && (
-                      <div className="flex flex-col gap-2 text-left">
-                        <div className="flex justify-between items-center">
-                          <label className="text-[10px] font-bold uppercase tracking-widest text-black/40">Clé API Gemini</label>
-                          <a 
-                            href="https://aistudio.google.com/app/apikey" 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-[10px] text-[#FF4D00] hover:underline font-bold"
-                          >
-                            Obtenir une clé
-                          </a>
+                    {/* Usage Info for Authenticated Users */}
+                    {user && !isAdmin && (
+                      <div className="bg-black/5 rounded-2xl p-5 flex flex-col gap-3 text-left border border-black/5">
+                        <div className="flex justify-between items-end">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-black/40 mb-1">Utilisation de l'IA</p>
+                            <h4 className="text-sm font-bold">Crédits Quotidiens</h4>
+                          </div>
+                          <div className="text-right">
+                            <span className={`text-lg font-bold ${remainingCredits > 0 ? 'text-emerald-600' : 'text-[#FF4D00]'}`}>
+                              {remainingCredits}
+                            </span>
+                            <span className="text-xs text-black/40 font-medium"> / {DAILY_LIMIT}</span>
+                          </div>
                         </div>
-                        <div className="relative">
-                          <input 
-                            type="password"
-                            value={apiKey}
-                            onChange={(e) => setApiKey(e.target.value)}
-                            placeholder="Collez votre clé API ici..."
-                            className="w-full px-4 py-3 bg-black/5 border border-black/5 rounded-xl text-xs focus:outline-none focus:border-[#FF4D00]/30 transition-colors"
+                        
+                        <div className="relative w-full bg-black/10 h-2 rounded-full overflow-hidden">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${(remainingCredits / DAILY_LIMIT) * 100}%` }}
+                            className={`h-full transition-all duration-1000 ${remainingCredits > 0 ? 'bg-emerald-500' : 'bg-[#FF4D00]'}`}
                           />
-                          <Key className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-black/20" />
+                        </div>
+
+                        {isLimitReached ? (
+                          <div className="flex items-center gap-2 text-[#FF4D00] bg-[#FF4D00]/5 p-3 rounded-xl border border-[#FF4D00]/10">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <p className="text-[11px] font-medium leading-tight">
+                              Limite atteinte. <br />
+                              <span className="font-bold">Prochain crédit disponible dans {getWaitTime()}</span>
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-black/40 italic">
+                            Chaque génération consomme 1 crédit. Recharge automatique après 24h.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* API Key Input - Only show if NOT logged in */}
+                    {!user && (
+                      <div className="space-y-4">
+                        <div className="bg-[#FF4D00]/5 border border-[#FF4D00]/10 rounded-2xl p-5 text-left space-y-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 bg-[#FF4D00] rounded-full flex items-center justify-center shrink-0">
+                              <LogIn className="text-white w-4 h-4" />
+                            </div>
+                            <p className="text-xs font-bold text-[#FF4D00]">Utilisez l'IA Gratuitement</p>
+                          </div>
+                          <p className="text-[11px] text-black/60 leading-relaxed">
+                            Connectez-vous avec Google pour profiter de 3 générations gratuites par jour sans avoir besoin de clé API.
+                          </p>
+                          <button 
+                            onClick={signInWithGoogle}
+                            className="w-full py-2.5 bg-black text-white rounded-xl text-xs font-bold hover:bg-black/80 transition-all active:scale-[0.98]"
+                          >
+                            Se connecter avec Google
+                          </button>
+                        </div>
+
+                        <div className="relative flex items-center py-2">
+                          <div className="flex-grow border-t border-black/5"></div>
+                          <span className="flex-shrink mx-4 text-[10px] font-bold uppercase tracking-widest text-black/20">OU</span>
+                          <div className="flex-grow border-t border-black/5"></div>
+                        </div>
+
+                        <div className="flex flex-col gap-2 text-left">
+                          <div className="flex justify-between items-center">
+                            <label className="text-[10px] font-bold uppercase tracking-widest text-black/40">Utiliser ma propre clé API</label>
+                            <a 
+                              href="https://aistudio.google.com/app/apikey" 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-[10px] text-[#FF4D00] hover:underline font-bold"
+                            >
+                              Obtenir une clé
+                            </a>
+                          </div>
+                          <div className="relative">
+                            <input 
+                              type="password"
+                              value={apiKey}
+                              onChange={(e) => setApiKey(e.target.value)}
+                              placeholder="Collez votre clé API ici..."
+                              className="w-full px-4 py-3 bg-black/5 border border-black/5 rounded-xl text-xs focus:outline-none focus:border-[#FF4D00]/30 transition-colors"
+                            />
+                            <Key className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-black/20" />
+                          </div>
                         </div>
                       </div>
                     )}
@@ -312,7 +442,7 @@ export default function App() {
                         </div>
                         <div>
                           <p className="text-xs font-bold text-emerald-900">Mode Administrateur Activé</p>
-                          <p className="text-[10px] text-emerald-700">Votre clé API système est utilisée automatiquement.</p>
+                          <p className="text-[10px] text-emerald-700">Utilisation illimitée avec la clé système.</p>
                         </div>
                       </div>
                     )}

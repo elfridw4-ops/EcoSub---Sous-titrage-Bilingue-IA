@@ -1,0 +1,30 @@
+{
+  "entities": {
+    "UserUsage": {
+      "title": "User Usage",
+      "description": "Tracks user generation usage and limits",
+      "type": "object",
+      "properties": {
+        "generations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": "List of timestamps of successful generations in the last 24 hours"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email for reference"
+        }
+      },
+      "required": ["generations"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserUsage",
+      "description": "User usage data"
+    }
+  }
+}
