@@ -30,7 +30,7 @@ async function startServer() {
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   // API Routes
-  app.post('/api/upload', upload.single('video'), (req, res) => {
+  app.post('/api/upload', upload.single('video'), (req: any, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     res.json({ filename: req.file.filename });
   });
