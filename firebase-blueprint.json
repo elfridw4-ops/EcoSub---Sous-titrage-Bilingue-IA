@@ -32,12 +32,31 @@
         }
       },
       "required": ["generations"]
+    },
+    "GlobalStats": {
+      "title": "Global Stats",
+      "description": "Aggregated statistics for the application",
+      "type": "object",
+      "properties": {
+        "anonymousGenerations": {
+          "type": "integer",
+          "description": "Total generations made by anonymous users with their own API key"
+        },
+        "totalGoogleUsers": {
+          "type": "integer",
+          "description": "Total number of unique Google users (calculated or cached)"
+        }
+      }
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "UserUsage",
       "description": "User usage data"
+    },
+    "/stats/global": {
+      "schema": "GlobalStats",
+      "description": "Global application statistics"
     }
   }
 }

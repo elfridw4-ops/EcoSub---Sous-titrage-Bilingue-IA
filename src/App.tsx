@@ -1,10 +1,103 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, Component } from 'react';
 import { Upload, Video, CheckCircle, Loader2, Download, Languages, Play, Key, LogIn, LogOut, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from '@google/genai';
 import { auth, signInWithGoogle, logout, db } from './firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc, arrayUnion, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, arrayUnion, onSnapshot, collection, getDocs, increment } from 'firebase/firestore';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+class ErrorBoundary extends Component<any, any> {
+  state = { hasError: false, error: null };
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      let message = "Une erreur inattendue est survenue.";
+      try {
+        const parsed = JSON.parse(this.state.error.message);
+        if (parsed.error && parsed.error.includes('permissions')) {
+          message = "Erreur de permission Firestore. Veuillez contacter l'administrateur.";
+        }
+      } catch (e) {
+        message = this.state.error?.message || message;
+      }
+
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-[#FDFCFB] p-4">
+          <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center space-y-4 border border-black/5">
+            <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto">
+              <Loader2 className="w-8 h-8 text-red-500" />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Oups ! Quelque chose a mal tourné</h2>
+            <p className="text-sm text-gray-500 leading-relaxed">{message}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full py-3 bg-black text-white rounded-xl text-sm font-bold hover:bg-black/80 transition-all"
+            >
+              Recharger la page
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (this as any).props.children;
+  }
+}
 
 const ADMIN_EMAIL = 'elfridw4@gmail.com';
 const DAILY_LIMIT = 3;
@@ -24,6 +117,9 @@ export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [usage, setUsage] = useState<{ generations: string[], history?: any[] } | null>(null);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [globalStats, setGlobalStats] = useState<any>(null);
+  const [showAdminDash, setShowAdminDash] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auth listener
@@ -48,14 +144,49 @@ export default function App() {
         setUsage(docSnap.data() as { generations: string[], history?: any[] });
       } else {
         // Initialize user doc if it doesn't exist
-        setDoc(userRef, { generations: [], history: [], email: user.email });
+        setDoc(userRef, { generations: [], history: [], email: user.email }).catch(e => handleFirestoreError(e, OperationType.WRITE, `users/${user.uid}`));
       }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
     });
 
     return () => unsubscribe();
   }, [user]);
 
   const isAdmin = user?.email === ADMIN_EMAIL;
+
+  // Admin Data Fetcher
+  useEffect(() => {
+    if (!isAdmin) return;
+
+    // Fetch all users
+    const fetchAllUsers = async () => {
+      try {
+        const querySnapshot = await getDocs(collection(db, 'users'));
+        const users = querySnapshot.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }))
+          .filter((u: any) => u.email !== ADMIN_EMAIL);
+        setAllUsers(users);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.LIST, 'users');
+      }
+    };
+
+    // Listen to global stats
+    const statsRef = doc(db, 'stats', 'global');
+    const unsubStats = onSnapshot(statsRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setGlobalStats(docSnap.data());
+      } else {
+        setDoc(statsRef, { anonymousGenerations: 0 }).catch(e => handleFirestoreError(e, OperationType.WRITE, 'stats/global'));
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'stats/global');
+    });
+
+    fetchAllUsers();
+    return () => unsubStats();
+  }, [isAdmin]);
   
   // Logic: All authenticated users get to use the system key, but limited.
   // Unauthenticated users must provide their own key (or login).
@@ -334,13 +465,22 @@ export default function App() {
         if (isAdmin) {
           await updateDoc(userRef, {
             history: arrayUnion(historyItem)
-          });
+          }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`));
         } else {
           await updateDoc(userRef, {
             generations: arrayUnion(new Date().toISOString()),
             history: arrayUnion(historyItem)
-          });
+          }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`));
         }
+      } else if (apiKey) {
+        // Anonymous user with API key
+        const statsRef = doc(db, 'stats', 'global');
+        await updateDoc(statsRef, {
+          anonymousGenerations: increment(1)
+        }).catch(async () => {
+          // If doc doesn't exist, create it
+          await setDoc(statsRef, { anonymousGenerations: 1 }, { merge: true }).catch(e => handleFirestoreError(e, OperationType.WRITE, 'stats/global'));
+        });
       }
 
       setResultUrl(downloadUrl);
@@ -353,7 +493,8 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#FDFCFB] text-[#141414] font-sans">
+    <ErrorBoundary>
+      <div className="min-h-screen bg-[#FDFCFB] text-[#141414] font-sans">
       {/* Header */}
       <header className="border-b border-black/5 p-4 sm:p-6 flex justify-between items-center sticky top-0 bg-[#FDFCFB]/80 backdrop-blur-md z-50">
         <div className="flex items-center gap-2">
@@ -364,6 +505,16 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-3 sm:gap-4">
+          {isAdmin && (
+            <button 
+              onClick={() => setShowAdminDash(!showAdminDash)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all ${
+                showAdminDash ? 'bg-[#FF4D00] text-white' : 'bg-black/5 text-black/40 hover:bg-black/10'
+              }`}
+            >
+              Dashboard
+            </button>
+          )}
           {!isAuthLoading && (
             user ? (
               <div className="flex items-center gap-3">
@@ -403,6 +554,70 @@ export default function App() {
       </header>
 
       <main className="max-w-4xl mx-auto p-4 sm:p-8 pt-8 sm:pt-16">
+        {/* Admin Dashboard */}
+        <AnimatePresence>
+          {isAdmin && showAdminDash && (
+            <motion.div 
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mb-12 overflow-hidden"
+            >
+              <div className="bg-black text-white rounded-3xl p-6 sm:p-8 space-y-8">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-xl font-bold">Tableau de Bord Administrateur</h3>
+                  <button onClick={() => setShowAdminDash(false)} className="text-white/40 hover:text-white">Fermer</button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                  <div className="bg-white/5 rounded-2xl p-5 border border-white/10">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-1">Utilisateurs Google</p>
+                    <p className="text-3xl font-bold">{allUsers.length}</p>
+                    <p className="text-[10px] text-white/20 mt-2">Comptes uniques enregistrés</p>
+                  </div>
+                  <div className="bg-white/5 rounded-2xl p-5 border border-white/10">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-1">Utilisateurs Clé API</p>
+                    <p className="text-3xl font-bold">{globalStats?.anonymousGenerations || 0}</p>
+                    <p className="text-[10px] text-white/20 mt-2">Générations anonymes totales</p>
+                  </div>
+                  <div className="bg-white/5 rounded-2xl p-5 border border-white/10">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-1">Total Générations</p>
+                    <p className="text-3xl font-bold">
+                      {(allUsers.reduce((acc, u) => acc + (u.history?.length || 0), 0)) + (globalStats?.anonymousGenerations || 0)}
+                    </p>
+                    <p className="text-[10px] text-white/20 mt-2">Toutes méthodes confondues</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-white/40">Derniers Utilisateurs Google</h4>
+                  <div className="grid grid-cols-1 gap-2">
+                    {allUsers.slice(0, 5).map((u, i) => (
+                      <div key={i} className="flex justify-between items-center bg-white/5 p-3 rounded-xl border border-white/5">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-white/10 rounded-full flex items-center justify-center text-[10px] font-bold">
+                            {u.email?.[0].toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium">{u.email}</p>
+                            <p className="text-[9px] text-white/40">{u.history?.length || 0} générations</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[9px] text-white/40">Dernière activité</p>
+                          <p className="text-[10px] font-medium">
+                            {u.generations?.length > 0 ? new Date(u.generations[u.generations.length - 1]).toLocaleDateString() : 'Jamais'}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
           {/* Left Column: Info */}
           <div className="lg:col-span-5 space-y-6">
@@ -839,5 +1054,6 @@ export default function App() {
         <p className="font-bold">Created by Horacio CHINKOUN</p>
       </footer>
     </div>
+    </ErrorBoundary>
   );
 }
