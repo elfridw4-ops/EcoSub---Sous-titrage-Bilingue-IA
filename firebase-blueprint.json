@@ -13,6 +13,19 @@
           },
           "description": "List of timestamps of successful generations in the last 24 hours"
         },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "videoName": { "type": "string" },
+              "date": { "type": "string", "format": "date-time" },
+              "language": { "type": "string" },
+              "mode": { "type": "string" }
+            }
+          },
+          "description": "History of generated transcriptions"
+        },
         "email": {
           "type": "string",
           "description": "User email for reference"

@@ -12,6 +12,10 @@ const WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
+  const [refFile, setRefFile] = useState<File | null>(null);
+  const [filePreview, setFilePreview] = useState<string | null>(null);
+  const [refPreview, setRefPreview] = useState<string | null>(null);
+  const [useDynamicEmojis, setUseDynamicEmojis] = useState(true);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'processing' | 'done' | 'error'>('idle');
   const [subtitleMode, setSubtitleMode] = useState<'bilingual' | 'original' | 'translation'>('bilingual');
   const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('gemini_api_key') || '');
@@ -19,7 +23,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [usage, setUsage] = useState<{ generations: string[] } | null>(null);
+  const [usage, setUsage] = useState<{ generations: string[], history?: any[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auth listener
@@ -41,10 +45,10 @@ export default function App() {
     const userRef = doc(db, 'users', user.uid);
     const unsubscribe = onSnapshot(userRef, (docSnap) => {
       if (docSnap.exists()) {
-        setUsage(docSnap.data() as { generations: string[] });
+        setUsage(docSnap.data() as { generations: string[], history?: any[] });
       } else {
         // Initialize user doc if it doesn't exist
-        setDoc(userRef, { generations: [], email: user.email });
+        setDoc(userRef, { generations: [], history: [], email: user.email });
       }
     });
 
@@ -87,12 +91,30 @@ export default function App() {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
+      const selectedFile = e.target.files[0];
+      setFile(selectedFile);
+      setFilePreview(URL.createObjectURL(selectedFile));
       setStatus('idle');
       setResultUrl(null);
       setError(null);
     }
   };
+
+  const handleRefFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const selectedFile = e.target.files[0];
+      setRefFile(selectedFile);
+      setRefPreview(URL.createObjectURL(selectedFile));
+    }
+  };
+
+  // Cleanup previews
+  useEffect(() => {
+    return () => {
+      if (filePreview) URL.revokeObjectURL(filePreview);
+      if (refPreview) URL.revokeObjectURL(refPreview);
+    };
+  }, [filePreview, refPreview]);
 
   const downloadFile = async () => {
     if (!resultUrl) return;
@@ -145,66 +167,124 @@ export default function App() {
       setError(null);
 
       // 1. Upload to server
+      if (file.size > 50 * 1024 * 1024) {
+        throw new Error("Le fichier est trop volumineux (max 50 Mo pour le moment).");
+      }
+
       const formData = new FormData();
       formData.append('video', file);
+      if (refFile) {
+        formData.append('reference', refFile);
+      }
 
-      const uploadRes = await fetch('/api/upload', {
+      const uploadRes = await fetch('/api/upload-multi', {
         method: 'POST',
         body: formData,
       });
 
+      const uploadText = await uploadRes.text();
+
       if (!uploadRes.ok) {
-        const errorText = await uploadRes.text();
-        let errorMessage = 'Upload failed';
-        try {
-          const errorJson = JSON.parse(errorText);
-          errorMessage = errorJson.error || errorMessage;
-        } catch {
-          errorMessage = `${uploadRes.status} ${uploadRes.statusText}`;
+        if (uploadText.includes('Cookie check') || uploadText.includes('Authenticate in new window')) {
+          throw new Error("Votre navigateur bloque les cookies de sécurité. Veuillez ouvrir l'application dans un nouvel onglet ou autoriser les cookies tiers.");
         }
-        throw new Error(errorMessage);
+        throw new Error(`Le téléchargement a échoué (${uploadRes.status}): ${uploadText.slice(0, 100)}`);
       }
-      const { filename } = await uploadRes.json();
+      
+      let uploadData;
+      try {
+        uploadData = JSON.parse(uploadText);
+      } catch (e) {
+        if (uploadText.includes('Cookie check') || uploadText.includes('Authenticate in new window')) {
+          throw new Error("Problème de cookies de sécurité. Veuillez ouvrir l'application dans un nouvel onglet (bouton en haut à droite) pour corriger cela.");
+        }
+        console.error('Upload JSON parse error. Received:', uploadText);
+        throw new Error('Le serveur a renvoyé une réponse invalide (pas du JSON).');
+      }
+      const { filename } = uploadData;
 
       // 2. Transcription & Translation via Gemini
       setStatus('processing');
       const ai = new GoogleGenAI({ apiKey: activeApiKey });
       const base64Data = await fileToBase64(file);
+      
+      let refBase64 = null;
+      if (refFile) {
+        refBase64 = await fileToBase64(refFile);
+      }
 
       const prompt = `
-        Analyze this video. 
-        1. Detect if the language is English or French.
+        Analyze the videos provided.
+        ${refFile ? "The first video is the TARGET video. The second video is the REFERENCE video." : "The provided video is the TARGET video."}
+        
+        TASKS:
+        1. Detect if the language in the TARGET video is English or French.
         2. Transcribe the audio in its original language with precise timestamps.
         3. Translate each segment into the other language (EN -> FR or FR -> EN).
-        4. Return ONLY a JSON array of objects with this structure:
-           [{"start": number, "end": number, "original": string, "translated": string}]
+        ${useDynamicEmojis ? "4. Add 1 to 3 highly relevant and expressive emojis (e.g., 😂, 😭, 😞, 😌, 🤣, 😒, 🔥, 💀, ✊, 💸, ❣️, 💔, 🙃, 👏, 🙄, 🤛, 😮, 😦, 🤔, 🥳, 👆, 😁, 🎉, 😍, 🤩, 😱, 😛, 🤪, 🥺, 🥱, 😡, 🤨, 🤯, 🤡, 😈, 👽, 💯, 👀, 👄, 👅, 🫀, 🧠, 🫁, 👎, 👂, 💪, 🤞, ✌️, 🤝, 🖕, 🙏, 🌻, 🌼, 🌪️, 🌈, 🌟, 🌍, 🥒, 🍑, 🚧, 🚨, ✈️, 🚢, 🚘) at the end of each segment. The emojis MUST perfectly match the emotion, tone, and specific keywords of the phrase to make it more engaging." : ""}
+        ${refFile ? "5. Analyze the visual style of subtitles in the REFERENCE video (font color, background, position, size). Return a 'style' object with these properties: primaryColor (hex), outlineColor (hex), fontSize (number), alignment (1-9, where 2 is bottom center)." : ""}
+        
+        Return ONLY a JSON object with this structure:
+        {
+          "segments": [{"start": number, "end": number, "original": string, "translated": string}],
+          "style": { "primaryColor": "string", "outlineColor": "string", "fontSize": number, "alignment": number },
+          "detectedLanguage": "string"
+        }
         The 'start' and 'end' should be in seconds.
       `;
 
-      const geminiResponse = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: [
-          { text: prompt },
-          {
-            inlineData: {
-              mimeType: file.type || 'video/mp4',
-              data: base64Data
-            }
-          }
-        ],
-        config: {
-          responseMimeType: 'application/json'
+      const contents: any[] = [{ text: prompt }];
+      
+      // Target Video
+      contents.push({
+        inlineData: {
+          mimeType: file.type || 'video/mp4',
+          data: base64Data
         }
       });
 
-      let rawSegments;
+      // Reference Video
+      if (refBase64) {
+        contents.push({
+          inlineData: {
+            mimeType: refFile?.type || 'video/mp4',
+            data: refBase64
+          }
+        });
+      }
+
+      let geminiResponse;
       try {
-        rawSegments = JSON.parse(geminiResponse.text || '[]');
+        geminiResponse = await ai.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          contents: { parts: contents },
+          config: {
+            responseMimeType: 'application/json'
+          }
+        });
+      } catch (geminiErr: any) {
+        console.error('Gemini API Error:', geminiErr);
+        const msg = geminiErr.message || '';
+        if (msg.includes('API_KEY_INVALID') || msg.includes('invalid') || msg.includes('key')) {
+          throw new Error('Clé API invalide ou expirée. Veuillez vérifier votre clé Gemini.');
+        } else if (msg.includes('quota') || msg.includes('429')) {
+          throw new Error('Quota dépassé. Veuillez réessayer plus tard ou utiliser votre propre clé API.');
+        }
+        throw new Error(`Erreur Gemini: ${msg}`);
+      }
+
+      let aiResult;
+      try {
+        aiResult = JSON.parse(geminiResponse.text || '{}');
       } catch (e) {
         console.error('Gemini JSON parse error:', geminiResponse.text);
-        throw new Error('Erreur lors de la lecture de la transcription IA. Vérifiez votre clé API.');
+        throw new Error('L\'IA a renvoyé un format invalide. Veuillez réessayer.');
       }
       
+      const rawSegments = aiResult.segments || [];
+      const inferredStyle = aiResult.style || null;
+      const detectedLanguage = aiResult.detectedLanguage || 'Inconnu';
+
       // Filter segments based on selected mode
       const segments = rawSegments.map((seg: any) => {
         if (subtitleMode === 'original') return { ...seg, translated: '' };
@@ -216,28 +296,51 @@ export default function App() {
       const burnRes = await fetch('/api/burn-subtitles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename, segments }),
+        body: JSON.stringify({ filename, segments, style: inferredStyle }),
       });
 
-      if (!burnRes.ok) {
-        const errorText = await burnRes.text();
-        let errorMessage = 'Subtitle burning failed';
-        try {
-          const errorJson = JSON.parse(errorText);
-          errorMessage = errorJson.error || errorMessage;
-        } catch {
-          errorMessage = `${burnRes.status} ${burnRes.statusText}`;
-        }
-        throw new Error(errorMessage);
+    if (!burnRes.ok) {
+      const errorText = await burnRes.text();
+      let errorMessage = 'Subtitle burning failed';
+      try {
+        const errorJson = JSON.parse(errorText);
+        errorMessage = errorJson.error || errorMessage;
+      } catch {
+        errorMessage = `Erreur ${burnRes.status}: ${errorText.slice(0, 100)}`;
       }
-      const { downloadUrl } = await burnRes.json();
+      throw new Error(errorMessage);
+    }
+    
+    let burnData;
+    const burnText = await burnRes.text();
+    try {
+      burnData = JSON.parse(burnText);
+    } catch (e) {
+      console.error('Burn JSON parse error. Received:', burnText);
+      throw new Error('Le serveur a renvoyé une réponse invalide après le traitement.');
+    }
+    const { downloadUrl } = burnData;
 
-      // 4. Update usage in Firestore if using system key
-      if (user && !isAdmin) {
+      // 4. Update usage and history in Firestore
+      if (user) {
         const userRef = doc(db, 'users', user.uid);
-        await updateDoc(userRef, {
-          generations: arrayUnion(new Date().toISOString())
-        });
+        const historyItem = {
+          videoName: file.name,
+          date: new Date().toISOString(),
+          language: detectedLanguage,
+          mode: subtitleMode
+        };
+        
+        if (isAdmin) {
+          await updateDoc(userRef, {
+            history: arrayUnion(historyItem)
+          });
+        } else {
+          await updateDoc(userRef, {
+            generations: arrayUnion(new Date().toISOString()),
+            history: arrayUnion(historyItem)
+          });
+        }
       }
 
       setResultUrl(downloadUrl);
@@ -431,6 +534,9 @@ export default function App() {
                             />
                             <Key className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-black/20" />
                           </div>
+                          {apiKey && (
+                            <p className="text-[9px] text-emerald-600 font-bold mt-1">✓ Utilisation de votre clé API personnelle (Illimité)</p>
+                          )}
                         </div>
                       </div>
                     )}
@@ -447,22 +553,89 @@ export default function App() {
                       </div>
                     )}
 
-                    <div 
-                      onClick={() => fileInputRef.current?.click()}
-                      className="border-2 border-dashed border-black/10 rounded-2xl p-8 sm:p-12 cursor-pointer hover:border-[#FF4D00]/30 transition-colors group"
-                    >
-                      <input 
-                        type="file" 
-                        ref={fileInputRef} 
-                        onChange={handleFileChange} 
-                        className="hidden" 
-                        accept="video/*"
-                      />
-                      <Upload className="w-12 h-12 mx-auto mb-4 text-black/20 group-hover:text-[#FF4D00] transition-colors" />
-                      <p className="text-xs font-medium">
-                        {file ? file.name : "Cliquez pour choisir une vidéo"}
-                      </p>
-                      <p className="text-xs text-black/40 mt-2">MP4, MOV, AVI (Max 100MB)</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="border-2 border-dashed border-black/10 rounded-2xl p-4 cursor-pointer hover:border-[#FF4D00]/30 transition-colors group flex flex-col items-center justify-center text-center relative overflow-hidden min-h-[160px]"
+                      >
+                        <input 
+                          type="file" 
+                          ref={fileInputRef} 
+                          onChange={handleFileChange} 
+                          className="hidden" 
+                          accept="video/*"
+                        />
+                        {filePreview ? (
+                          <div className="absolute inset-0 bg-black">
+                            <video src={filePreview} className="w-full h-full object-cover opacity-60" muted />
+                            <div className="absolute inset-0 flex flex-col items-center justify-center p-2 bg-black/20">
+                              <Play className="w-6 h-6 text-white mb-1" />
+                              <p className="text-[10px] font-bold text-white uppercase tracking-widest truncate max-w-full">
+                                {file?.name}
+                              </p>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <Upload className="w-8 h-8 mb-2 text-black/20 group-hover:text-[#FF4D00] transition-colors" />
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-black/40 mb-1">Vidéo Cible</p>
+                            <p className="text-[10px] font-medium text-black/20">Choisir la vidéo</p>
+                          </>
+                        )}
+                      </div>
+
+                      <div 
+                        onClick={() => {
+                          const input = document.createElement('input');
+                          input.type = 'file';
+                          input.accept = 'video/*';
+                          input.onchange = handleRefFileChange;
+                          input.click();
+                        }}
+                        className={`border-2 border-dashed rounded-2xl p-4 cursor-pointer transition-colors group flex flex-col items-center justify-center text-center relative overflow-hidden min-h-[160px] ${
+                          refFile ? 'border-[#FF4D00]/30 bg-[#FF4D00]/5' : 'border-black/10 hover:border-black/30'
+                        }`}
+                      >
+                        {refPreview ? (
+                          <div className="absolute inset-0 bg-black">
+                            <video src={refPreview} className="w-full h-full object-cover opacity-60" muted />
+                            <div className="absolute inset-0 flex flex-col items-center justify-center p-2 bg-black/20">
+                              <Video className="w-6 h-6 text-white mb-1" />
+                              <p className="text-[10px] font-bold text-white uppercase tracking-widest truncate max-w-full">
+                                {refFile?.name}
+                              </p>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <Video className={`w-8 h-8 mb-2 transition-colors ${refFile ? 'text-[#FF4D00]' : 'text-black/20 group-hover:text-black/40'}`} />
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-black/40 mb-1">Vidéo Référence</p>
+                            <p className="text-[10px] font-medium text-black/20">Copier le style</p>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Dynamic Emojis Toggle */}
+                    <div className="flex items-center justify-between bg-black/5 p-4 rounded-xl border border-black/5">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${useDynamicEmojis ? 'bg-[#FF4D00] text-white' : 'bg-black/10 text-black/40'}`}>
+                          <span className="text-sm">✨</span>
+                        </div>
+                        <div className="text-left">
+                          <p className="text-xs font-bold">Emojis Expressifs ✨</p>
+                          <p className="text-[10px] text-black/40">Ajoute des emojis réels (😂, 😭, 🔥) qui correspondent au sens des mots</p>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => setUseDynamicEmojis(!useDynamicEmojis)}
+                        className={`w-12 h-6 rounded-full relative transition-colors ${useDynamicEmojis ? 'bg-[#FF4D00]' : 'bg-black/20'}`}
+                      >
+                        <motion.div 
+                          animate={{ x: useDynamicEmojis ? 24 : 4 }}
+                          className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm"
+                        />
+                      </button>
                     </div>
 
                     {/* Subtitle Mode Selection */}
@@ -574,6 +747,28 @@ export default function App() {
                     <div>
                       <h3 className="text-xl font-bold text-red-600">Oups !</h3>
                       <p className="text-sm text-black/60 mt-2">{error}</p>
+                      {error?.includes("onglet") && (
+                        <button 
+                          onClick={() => window.open(window.location.href, '_blank')}
+                          className="mt-4 px-4 py-2 bg-[#FF4D00] text-white text-xs font-bold rounded-lg hover:bg-[#E64500] transition-colors"
+                        >
+                          Ouvrir dans un nouvel onglet
+                        </button>
+                      )}
+                      {(error?.toLowerCase().includes('clé') || error?.toLowerCase().includes('api')) && (
+                        <div className="mt-4 p-4 bg-black/5 rounded-xl border border-black/5">
+                          <p className="text-[11px] text-black/40 mb-2">Besoin d'une nouvelle clé ?</p>
+                          <a 
+                            href="https://aistudio.google.com/app/apikey" 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 text-xs font-bold text-[#FF4D00] hover:underline"
+                          >
+                            <Key className="w-3 h-3" />
+                            Obtenir une clé Gemini gratuite
+                          </a>
+                        </div>
+                      )}
                     </div>
                     <button 
                       onClick={() => setStatus('idle')}
@@ -587,11 +782,61 @@ export default function App() {
             </motion.div>
           </div>
         </div>
+
+        {/* History Section */}
+        {user && usage?.history && usage.history.length > 0 && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-12 space-y-6"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-bold flex items-center gap-2">
+                <Video className="w-5 h-5 text-[#FF4D00]" />
+                Historique des Générations
+              </h3>
+              <span className="text-[10px] font-bold uppercase tracking-widest text-black/40">
+                {usage.history.length} vidéo{usage.history.length > 1 ? 's' : ''} traitée{usage.history.length > 1 ? 's' : ''}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[...usage.history].reverse().map((item, idx) => (
+                <div 
+                  key={idx}
+                  className="bg-white border border-black/5 p-4 rounded-2xl flex items-start gap-4 hover:shadow-lg hover:shadow-black/5 transition-all"
+                >
+                  <div className="w-10 h-10 bg-black/5 rounded-xl flex items-center justify-center shrink-0">
+                    <Video className="w-5 h-5 text-black/20" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold truncate">{item.videoName}</p>
+                    <div className="flex items-center gap-3 mt-1">
+                      <span className="text-[10px] text-black/40 flex items-center gap-1">
+                        <Languages className="w-3 h-3" />
+                        {item.language}
+                      </span>
+                      <span className="text-[10px] text-black/40">
+                        {new Date(item.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[9px] font-bold uppercase tracking-tighter bg-black/5 px-2 py-1 rounded text-black/40">
+                      {item.mode}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
       </main>
 
       {/* Footer */}
-      <footer className="mt-20 border-t border-black/5 p-8 text-center text-xs text-black/30 uppercase tracking-[0.2em]">
-        Propulsé par Google Gemini & FFmpeg • 2024 EcoSub AI
+      <footer className="mt-20 border-t border-black/5 p-8 text-center text-[10px] text-black/30 uppercase tracking-[0.2em] space-y-2">
+        <p>Propulsé par Google Gemini & FFmpeg • 2026 EcoSub AI</p>
+        <p className="font-bold">Created by Horacio CHINKOUN</p>
       </footer>
     </div>
   );
