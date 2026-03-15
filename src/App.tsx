@@ -120,6 +120,9 @@ export default function App() {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [globalStats, setGlobalStats] = useState<any>(null);
   const [showAdminDash, setShowAdminDash] = useState(false);
+  const [isKeyValidating, setIsKeyValidating] = useState(false);
+  const [keyValidationError, setKeyValidationError] = useState<string | null>(null);
+  const [isKeyValid, setIsKeyValid] = useState<boolean | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auth listener
@@ -154,6 +157,53 @@ export default function App() {
   }, [user]);
 
   const isAdmin = user?.email === ADMIN_EMAIL;
+
+  // API Key Validation
+  useEffect(() => {
+    if (!apiKey || user) {
+      setIsKeyValid(null);
+      setKeyValidationError(null);
+      return;
+    }
+
+    const validateKey = async () => {
+      setIsKeyValidating(true);
+      setKeyValidationError(null);
+      setIsKeyValid(null);
+
+      try {
+        // Basic format check
+        if (apiKey.length < 30) {
+          throw new Error("Clé trop courte");
+        }
+
+        const ai = new GoogleGenAI({ apiKey });
+        // Just check if we can access the model info
+        await ai.models.get({ model: "gemini-1.5-flash" }); 
+        
+        // Try a very small generation to be sure
+        const response = await ai.models.generateContent({
+          model: "gemini-1.5-flash",
+          contents: "test",
+          config: { maxOutputTokens: 1 }
+        });
+
+        if (response.text) {
+          setIsKeyValid(true);
+          localStorage.setItem('gemini_api_key', apiKey);
+        }
+      } catch (err: any) {
+        console.error("Key validation error:", err);
+        setIsKeyValid(false);
+        setKeyValidationError(err.message || "Clé API invalide");
+      } finally {
+        setIsKeyValidating(false);
+      }
+    };
+
+    const timeoutId = setTimeout(validateKey, 1000);
+    return () => clearTimeout(timeoutId);
+  }, [apiKey, user]);
 
   // Admin Data Fetcher
   useEffect(() => {
@@ -294,6 +344,13 @@ export default function App() {
     }
 
     try {
+      if (!user && isKeyValid === false) {
+        throw new Error("Veuillez fournir une clé API valide avant de continuer.");
+      }
+      if (!user && !apiKey) {
+        throw new Error("Veuillez vous connecter ou fournir une clé API Gemini.");
+      }
+      
       setStatus('uploading');
       setError(null);
 
@@ -745,12 +802,24 @@ export default function App() {
                               value={apiKey}
                               onChange={(e) => setApiKey(e.target.value)}
                               placeholder="Collez votre clé API ici..."
-                              className="w-full px-4 py-3 bg-black/5 border border-black/5 rounded-xl text-xs focus:outline-none focus:border-[#FF4D00]/30 transition-colors"
+                              className={`w-full px-4 py-3 bg-black/5 border rounded-xl text-xs focus:outline-none transition-all ${
+                                isKeyValid === true ? 'border-emerald-500/30 bg-emerald-50/30' : 
+                                isKeyValid === false ? 'border-red-500/30 bg-red-50/30' : 
+                                'border-black/5 focus:border-[#FF4D00]/30'
+                              }`}
                             />
-                            <Key className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-black/20" />
+                            <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                              {isKeyValidating && <Loader2 className="w-4 h-4 text-[#FF4D00] animate-spin" />}
+                              {!isKeyValidating && isKeyValid === true && <CheckCircle className="w-4 h-4 text-emerald-500" />}
+                              {!isKeyValidating && isKeyValid === false && <div className="w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[8px] text-white font-bold">!</div>}
+                              <Key className={`w-4 h-4 ${isKeyValid === true ? 'text-emerald-500/40' : isKeyValid === false ? 'text-red-500/40' : 'text-black/20'}`} />
+                            </div>
                           </div>
-                          {apiKey && (
-                            <p className="text-[9px] text-emerald-600 font-bold mt-1">✓ Utilisation de votre clé API personnelle (Illimité)</p>
+                          {keyValidationError && (
+                            <p className="text-[9px] text-red-500 font-bold mt-1 ml-1">{keyValidationError}</p>
+                          )}
+                          {isKeyValid === true && (
+                            <p className="text-[9px] text-emerald-600 font-bold mt-1 ml-1">✓ Clé API valide et prête à l'emploi (Illimité)</p>
                           )}
                         </div>
                       </div>
