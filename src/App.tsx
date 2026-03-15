@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect, Component } from 'react';
-import { Upload, Video, CheckCircle, Loader2, Download, Languages, Play, Key, LogIn, LogOut, User } from 'lucide-react';
+import { Upload, Video, CheckCircle, Loader2, Download, Languages, Play, Key, LogIn, LogOut, User, HelpCircle, ChevronRight, ChevronLeft, X, Sparkles, MousePointer2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from '@google/genai';
-import { auth, signInWithGoogle, logout, db } from './firebase';
+import { auth, signInWithGooglePopup, signInWithGoogleRedirect, getGoogleRedirectResult, logout, db } from './firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, arrayUnion, onSnapshot, collection, getDocs, increment } from 'firebase/firestore';
 
@@ -124,14 +124,34 @@ export default function App() {
   const [isKeyValidating, setIsKeyValidating] = useState(false);
   const [keyValidationError, setKeyValidationError] = useState<string | null>(null);
   const [isKeyValid, setIsKeyValid] = useState<boolean | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem('onboarding_completed'));
+  const [onboardingStep, setOnboardingStep] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auth listener
   useEffect(() => {
+    console.log("Auth: Initializing listener...");
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      console.log("Auth: State changed. User:", currentUser?.email || "None");
       setUser(currentUser);
       setIsAuthLoading(false);
     });
+
+    // Handle redirect result
+    getGoogleRedirectResult()
+      .then((result) => {
+        if (result?.user) {
+          console.log("Auth: Redirect result success:", result.user.email);
+          setUser(result.user);
+        }
+      })
+      .catch((err) => {
+        console.error("Auth: Redirect result error:", err);
+        if (err.code !== 'auth/cancelled-popup-request') {
+          setError("Erreur de redirection : " + err.message);
+        }
+      });
+
     return () => unsubscribe();
   }, []);
 
@@ -158,15 +178,55 @@ export default function App() {
   }, [user]);
 
   const handleGoogleSignIn = async () => {
+    console.log("Auth: Starting Google Sign In...");
     try {
       setError(null);
-      await signInWithGoogle();
+      
+      // Check if we are in an iframe
+      const isIframe = window.self !== window.top;
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      
+      console.log("Auth: Environment - isIframe:", isIframe, "isMobile:", isMobile);
+
+      if (isIframe) {
+        console.log("Auth: In iframe, attempting popup...");
+        try {
+          await signInWithGooglePopup();
+          console.log("Auth: Popup success");
+        } catch (popupErr: any) {
+          console.warn("Auth: Popup failed in iframe:", popupErr.code);
+          if (popupErr.code === 'auth/popup-blocked') {
+            setError("Le popup a été bloqué. Veuillez autoriser les popups ou ouvrir l'application dans un nouvel onglet.");
+          } else {
+            throw popupErr;
+          }
+        }
+      } else if (isMobile) {
+        console.log("Auth: On mobile, using redirect...");
+        await signInWithGoogleRedirect();
+      } else {
+        console.log("Auth: On desktop, attempting popup...");
+        try {
+          await signInWithGooglePopup();
+          console.log("Auth: Popup success");
+        } catch (popupErr: any) {
+          console.warn("Auth: Popup failed, falling back to redirect:", popupErr.code);
+          if (popupErr.code === 'auth/popup-blocked' || popupErr.code === 'auth/popup-closed-by-user') {
+            console.log("Auth: Falling back to redirect...");
+            await signInWithGoogleRedirect();
+          } else {
+            throw popupErr;
+          }
+        }
+      }
     } catch (err: any) {
-      console.error("Auth error:", err);
+      console.error("Auth: Final error:", err);
       if (err.code === 'auth/popup-blocked') {
         setError("Le popup de connexion a été bloqué. Veuillez autoriser les popups pour ce site.");
-      } else if (err.code === 'auth/cancelled-popup-request') {
+      } else if (err.code === 'auth/cancelled-popup-request' || err.code === 'auth/popup-closed-by-user') {
         // Ignore
+      } else if (err.code === 'auth/unauthorized-domain') {
+        setError("Ce domaine n'est pas autorisé dans la console Firebase. Veuillez ajouter " + window.location.hostname + " aux domaines autorisés.");
       } else {
         setError("Erreur de connexion : " + (err.message || "Inconnue"));
       }
@@ -578,8 +638,140 @@ export default function App() {
     }
   };
 
+  const finishOnboarding = () => {
+    setShowOnboarding(false);
+    localStorage.setItem('onboarding_completed', 'true');
+  };
+
+  const onboardingSteps = [
+    {
+      title: "Bienvenue sur EcoSub AI ✨",
+      description: "Transformez vos vidéos en contenus bilingues élégants en quelques secondes grâce à la puissance de Gemini 1.5 Flash.",
+      icon: <Sparkles className="w-12 h-12 text-[#FF4D00]" />,
+      image: "https://picsum.photos/seed/welcome/400/250"
+    },
+    {
+      title: "1. Vidéo Cible 🎯",
+      description: "Déposez la vidéo que vous souhaitez sous-titrer. Nous détecterons automatiquement si elle est en Français ou en Anglais.",
+      icon: <Upload className="w-12 h-12 text-[#FF4D00]" />,
+      image: "https://picsum.photos/seed/upload/400/250"
+    },
+    {
+      title: "2. Style de Référence (Optionnel) 🎨",
+      description: "Vous aimez le style d'un autre créateur ? Déposez une vidéo de référence et nous copierons automatiquement la couleur, la police et la position de ses sous-titres.",
+      icon: <Video className="w-12 h-12 text-[#FF4D00]" />,
+      image: "https://picsum.photos/seed/style/400/250"
+    },
+    {
+      title: "3. Magie de l'IA 🧠",
+      description: "Notre IA transcrit, traduit et incruste les sous-titres directement dans la vidéo. Vous pouvez même choisir d'ajouter des emojis expressifs automatiquement.",
+      icon: <Languages className="w-12 h-12 text-[#FF4D00]" />,
+      image: "https://picsum.photos/seed/ai/400/250"
+    },
+    {
+      title: "4. Téléchargez & Partagez 🚀",
+      description: "Une fois terminé, prévisualisez votre vidéo et téléchargez-la. Vos crédits gratuits se rechargent toutes les 24 heures !",
+      icon: <Download className="w-12 h-12 text-[#FF4D00]" />,
+      image: "https://picsum.photos/seed/share/400/250"
+    }
+  ];
+
   return (
     <ErrorBoundary>
+      <AnimatePresence>
+        {showOnboarding && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="bg-white rounded-[32px] shadow-2xl max-w-lg w-full overflow-hidden relative"
+            >
+              <button 
+                onClick={finishOnboarding}
+                className="absolute top-6 right-6 p-2 hover:bg-black/5 rounded-full transition-colors z-10"
+              >
+                <X className="w-5 h-5 text-black/40" />
+              </button>
+
+              <div className="p-8 sm:p-10 space-y-8">
+                <div className="flex flex-col items-center text-center space-y-6">
+                  <motion.div 
+                    key={onboardingStep}
+                    initial={{ scale: 0.5, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="w-24 h-24 bg-[#FF4D00]/5 rounded-3xl flex items-center justify-center"
+                  >
+                    {onboardingSteps[onboardingStep].icon}
+                  </motion.div>
+
+                  <div className="space-y-2">
+                    <h3 className="text-2xl font-bold tracking-tight">
+                      {onboardingSteps[onboardingStep].title}
+                    </h3>
+                    <p className="text-black/60 leading-relaxed">
+                      {onboardingSteps[onboardingStep].description}
+                    </p>
+                  </div>
+
+                  <div className="w-full aspect-video rounded-2xl overflow-hidden bg-black/5 border border-black/5">
+                    <img 
+                      src={onboardingSteps[onboardingStep].image} 
+                      alt="Tutorial" 
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-4">
+                  <div className="flex gap-1.5">
+                    {onboardingSteps.map((_, i) => (
+                      <div 
+                        key={i}
+                        className={`h-1.5 rounded-full transition-all duration-300 ${i === onboardingStep ? 'w-8 bg-[#FF4D00]' : 'w-1.5 bg-black/10'}`}
+                      />
+                    ))}
+                  </div>
+
+                  <div className="flex gap-3">
+                    {onboardingStep > 0 && (
+                      <button 
+                        onClick={() => setOnboardingStep(prev => prev - 1)}
+                        className="p-3 bg-black/5 hover:bg-black/10 rounded-xl transition-colors"
+                      >
+                        <ChevronLeft className="w-5 h-5" />
+                      </button>
+                    )}
+                    
+                    {onboardingStep < onboardingSteps.length - 1 ? (
+                      <button 
+                        onClick={() => setOnboardingStep(prev => prev + 1)}
+                        className="px-6 py-3 bg-black text-white rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-black/80 transition-all active:scale-95"
+                      >
+                        Suivant
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={finishOnboarding}
+                        className="px-8 py-3 bg-[#FF4D00] text-white rounded-xl font-bold text-sm hover:bg-[#E64500] transition-all active:scale-95 shadow-lg shadow-[#FF4D00]/20"
+                      >
+                        C'est parti !
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="min-h-screen bg-[#FDFCFB] text-[#141414] font-sans">
       {/* Header */}
       <header className="border-b border-black/5 p-4 sm:p-6 flex justify-between items-center sticky top-0 bg-[#FDFCFB]/80 backdrop-blur-md z-50">
@@ -591,6 +783,16 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-3 sm:gap-4">
+          <button 
+            onClick={() => {
+              setOnboardingStep(0);
+              setShowOnboarding(true);
+            }}
+            className="p-2 hover:bg-black/5 rounded-full transition-colors text-black/40 hover:text-[#FF4D00]"
+            title="Aide & Tutoriel"
+          >
+            <HelpCircle className="w-5 h-5" />
+          </button>
           {isAdmin && (
             <button 
               onClick={() => setShowAdminDash(!showAdminDash)}
@@ -737,6 +939,36 @@ export default function App() {
               layout
               className="bg-white border border-black/10 rounded-3xl p-5 sm:p-8 shadow-2xl shadow-black/5 min-h-[400px] flex flex-col justify-center"
             >
+              {error && (
+                <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl">
+                  <div className="flex items-start gap-3">
+                    <div className="w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0 mt-0.5">!</div>
+                    <div className="flex-grow">
+                      <p className="text-sm text-red-600 font-medium">{error}</p>
+                      {error.includes("domaine n'est pas autorisé") && (
+                        <div className="mt-2 p-3 bg-white/50 rounded-xl text-[10px] text-red-500 space-y-1">
+                          <p className="font-bold uppercase tracking-widest opacity-70">Action requise :</p>
+                          <p>1. Allez dans la console Firebase &gt; Authentification &gt; Paramètres &gt; Domaines autorisés.</p>
+                          <p>2. Ajoutez ce domaine : <code className="bg-red-100 px-1 rounded">{window.location.hostname}</code></p>
+                        </div>
+                      )}
+                      <button 
+                        onClick={() => {
+                          const debugInfo = `Domain: ${window.location.hostname}\nIframe: ${window.self !== window.top}\nAuthDomain: ${auth.app.options.authDomain}\nUserAgent: ${navigator.userAgent}`;
+                          console.log("Auth Debug Info:", debugInfo);
+                          alert(debugInfo);
+                        }}
+                        className="mt-2 text-[10px] font-bold uppercase tracking-widest text-red-400 hover:text-red-600 transition-colors"
+                      >
+                        Afficher les infos de diagnostic
+                      </button>
+                    </div>
+                    <button onClick={() => setError(null)} className="text-red-300 hover:text-red-500">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
               <AnimatePresence mode="wait">
                 {status === 'idle' && (
                   <motion.div 
