@@ -112,6 +112,7 @@ export default function App() {
   const [status, setStatus] = useState<'idle' | 'uploading' | 'processing' | 'done' | 'error'>('idle');
   const [subtitleMode, setSubtitleMode] = useState<'bilingual' | 'original' | 'translation'>('bilingual');
   const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('gemini_api_key') || '');
+  const [saveApiKey, setSaveApiKey] = useState<boolean>(() => localStorage.getItem('save_gemini_key') !== 'false');
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -156,6 +157,22 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
+  const handleGoogleSignIn = async () => {
+    try {
+      setError(null);
+      await signInWithGoogle();
+    } catch (err: any) {
+      console.error("Auth error:", err);
+      if (err.code === 'auth/popup-blocked') {
+        setError("Le popup de connexion a été bloqué. Veuillez autoriser les popups pour ce site.");
+      } else if (err.code === 'auth/cancelled-popup-request') {
+        // Ignore
+      } else {
+        setError("Erreur de connexion : " + (err.message || "Inconnue"));
+      }
+    }
+  };
+
   const isAdmin = user?.email === ADMIN_EMAIL;
 
   // API Key Validation
@@ -190,7 +207,6 @@ export default function App() {
 
         if (response.text) {
           setIsKeyValid(true);
-          localStorage.setItem('gemini_api_key', apiKey);
         }
       } catch (err: any) {
         console.error("Key validation error:", err);
@@ -204,6 +220,19 @@ export default function App() {
     const timeoutId = setTimeout(validateKey, 1000);
     return () => clearTimeout(timeoutId);
   }, [apiKey, user]);
+
+  // Handle Save Choice
+  useEffect(() => {
+    if (!saveApiKey) {
+      localStorage.removeItem('gemini_api_key');
+      localStorage.setItem('save_gemini_key', 'false');
+    } else if (isKeyValid && apiKey) {
+      localStorage.setItem('gemini_api_key', apiKey);
+      localStorage.setItem('save_gemini_key', 'true');
+    } else {
+      localStorage.setItem('save_gemini_key', 'true');
+    }
+  }, [saveApiKey, isKeyValid, apiKey]);
 
   // Admin Data Fetcher
   useEffect(() => {
@@ -596,7 +625,7 @@ export default function App() {
               </div>
             ) : (
               <button 
-                onClick={signInWithGoogle}
+                onClick={handleGoogleSignIn}
                 className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-full text-xs font-medium hover:bg-black/80 transition-colors"
               >
                 <LogIn className="w-3 h-3" />
@@ -771,11 +800,16 @@ export default function App() {
                             Connectez-vous avec Google pour profiter de 3 générations gratuites par jour sans avoir besoin de clé API.
                           </p>
                           <button 
-                            onClick={signInWithGoogle}
+                            onClick={handleGoogleSignIn}
                             className="w-full py-2.5 bg-black text-white rounded-xl text-xs font-bold hover:bg-black/80 transition-all active:scale-[0.98]"
                           >
                             Se connecter avec Google
                           </button>
+                          <div className="text-center">
+                            <p className="text-[9px] text-black/40">
+                              Problème de connexion ? <a href={window.location.href} target="_blank" rel="noopener noreferrer" className="text-[#FF4D00] hover:underline font-bold">Ouvrir dans un nouvel onglet</a>
+                            </p>
+                          </div>
                         </div>
 
                         <div className="relative flex items-center py-2">
@@ -821,6 +855,16 @@ export default function App() {
                           {isKeyValid === true && (
                             <p className="text-[9px] text-emerald-600 font-bold mt-1 ml-1">✓ Clé API valide et prête à l'emploi (Illimité)</p>
                           )}
+                          
+                          <div className="flex items-center gap-2 mt-2 ml-1">
+                            <button 
+                              onClick={() => setSaveApiKey(!saveApiKey)}
+                              className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${saveApiKey ? 'bg-[#FF4D00] border-[#FF4D00]' : 'border-black/20 bg-white'}`}
+                            >
+                              {saveApiKey && <CheckCircle className="w-3 h-3 text-white" />}
+                            </button>
+                            <span className="text-[10px] text-black/60 font-medium">Sauvegarder cette clé sur cet appareil</span>
+                          </div>
                         </div>
                       </div>
                     )}
