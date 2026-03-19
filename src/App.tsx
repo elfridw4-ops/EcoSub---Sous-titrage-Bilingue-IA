@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, Component } from 'react';
-import { Upload, Video, CheckCircle, Loader2, Download, Languages, Play, Key, LogIn, LogOut, User, HelpCircle, ChevronRight, ChevronLeft, X, Sparkles, MousePointer2 } from 'lucide-react';
+import { Upload, Video, CheckCircle, Loader2, Download, Languages, Play, Key, LogIn, LogOut, User, HelpCircle, ChevronRight, ChevronLeft, X, Sparkles, MousePointer2, AlertCircle, AlertTriangle, ExternalLink, ArrowRight, Palette, Type, AlignCenter, Settings2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from '@google/genai';
-import { auth, signInWithGooglePopup, signInWithGoogleRedirect, getGoogleRedirectResult, logout, db } from './firebase';
+import { auth, signInWithGoogle, logout, db } from './firebase';
+import { handleAppError, AppError, ErrorType } from './utils/errors';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, arrayUnion, onSnapshot, collection, getDocs, increment } from 'firebase/firestore';
 
@@ -35,26 +36,15 @@ interface FirestoreErrorInfo {
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
-    },
-    operationType,
-    path
+  const err = error instanceof Error ? error : new Error(String(error));
+  console.error(`Firestore Error [${operationType}] on [${path}]:`, err);
+  
+  // We don't want to show every Firestore error as a blocking app error 
+  // unless it's critical (like permission denied on user profile)
+  if (err.message.includes('permission-denied')) {
+    // This is often a session issue in iframes
+    console.warn("Permission denied detected. This might be a session/cookie issue.");
   }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
 }
 
 class ErrorBoundary extends Component<any, any> {
@@ -103,6 +93,85 @@ const ADMIN_EMAIL = 'elfridw4@gmail.com';
 const DAILY_LIMIT = 3;
 const WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+interface SubtitleStyle {
+  primaryColor: string;
+  outlineColor: string;
+  fontSize: number;
+  alignment: number;
+  fontName: string;
+  animation: 'none' | 'fade';
+  backgroundStyle: 'none' | 'semi-transparent-box';
+  shadow: number;
+}
+
+const PRESET_STYLES: Record<string, { name: string; style: SubtitleStyle }> = {
+  default: {
+    name: 'Défaut',
+    style: {
+      primaryColor: '#FFFFFF',
+      outlineColor: '#000000',
+      fontSize: 32,
+      alignment: 2,
+      fontName: 'Arial',
+      animation: 'none',
+      backgroundStyle: 'none',
+      shadow: 2
+    }
+  },
+  youtube: {
+    name: 'YouTube Classic',
+    style: {
+      primaryColor: '#FFFFFF',
+      outlineColor: '#000000',
+      fontSize: 28,
+      alignment: 2,
+      fontName: 'Roboto',
+      animation: 'none',
+      backgroundStyle: 'semi-transparent-box',
+      shadow: 0
+    }
+  },
+  netflix: {
+    name: 'Netflix Style',
+    style: {
+      primaryColor: '#FFFFFF',
+      outlineColor: '#000000',
+      fontSize: 34,
+      alignment: 2,
+      fontName: 'Consolas',
+      animation: 'none',
+      backgroundStyle: 'none',
+      shadow: 2
+    }
+  },
+  modern: {
+    name: 'Modern Green',
+    style: {
+      primaryColor: '#00FF00',
+      outlineColor: '#000000',
+      fontSize: 36,
+      alignment: 2,
+      fontName: 'Arial Black',
+      animation: 'fade',
+      backgroundStyle: 'none',
+      shadow: 3
+    }
+  },
+  minimal: {
+    name: 'Minimalist',
+    style: {
+      primaryColor: '#F3F4F6',
+      outlineColor: '#1F2937',
+      fontSize: 24,
+      alignment: 2,
+      fontName: 'Inter',
+      animation: 'none',
+      backgroundStyle: 'none',
+      shadow: 1
+    }
+  }
+};
+
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [refFile, setRefFile] = useState<File | null>(null);
@@ -111,10 +180,13 @@ export default function App() {
   const [useDynamicEmojis, setUseDynamicEmojis] = useState(true);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'processing' | 'done' | 'error'>('idle');
   const [subtitleMode, setSubtitleMode] = useState<'bilingual' | 'original' | 'translation'>('bilingual');
+  const [selectedPreset, setSelectedPreset] = useState<string>('default');
+  const [customStyle, setCustomStyle] = useState<SubtitleStyle>(PRESET_STYLES.default.style);
+  const [showStyleEditor, setShowStyleEditor] = useState(false);
   const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('gemini_api_key') || '');
   const [saveApiKey, setSaveApiKey] = useState<boolean>(() => localStorage.getItem('save_gemini_key') !== 'false');
   const [resultUrl, setResultUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [appError, setAppError] = useState<AppError | null>(null);
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [usage, setUsage] = useState<{ generations: string[], history?: any[] } | null>(null);
@@ -135,22 +207,10 @@ export default function App() {
       console.log("Auth: State changed. User:", currentUser?.email || "None");
       setUser(currentUser);
       setIsAuthLoading(false);
+      if (currentUser) {
+        setAppError(null);
+      }
     });
-
-    // Handle redirect result
-    getGoogleRedirectResult()
-      .then((result) => {
-        if (result?.user) {
-          console.log("Auth: Redirect result success:", result.user.email);
-          setUser(result.user);
-        }
-      })
-      .catch((err) => {
-        console.error("Auth: Redirect result error:", err);
-        if (err.code !== 'auth/cancelled-popup-request') {
-          setError("Erreur de redirection : " + err.message);
-        }
-      });
 
     return () => unsubscribe();
   }, []);
@@ -177,59 +237,28 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
+  // Clear error when API key changes
+  useEffect(() => {
+    if (apiKey) {
+      setAppError(null);
+    }
+  }, [apiKey]);
+
   const handleGoogleSignIn = async () => {
     console.log("Auth: Starting Google Sign In...");
     try {
-      setError(null);
-      
-      // Check if we are in an iframe
-      const isIframe = window.self !== window.top;
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      
-      console.log("Auth: Environment - isIframe:", isIframe, "isMobile:", isMobile);
-
-      if (isIframe) {
-        console.log("Auth: In iframe, attempting popup...");
-        try {
-          await signInWithGooglePopup();
-          console.log("Auth: Popup success");
-        } catch (popupErr: any) {
-          console.warn("Auth: Popup failed in iframe:", popupErr.code);
-          if (popupErr.code === 'auth/popup-blocked') {
-            setError("Le popup a été bloqué. Veuillez autoriser les popups ou ouvrir l'application dans un nouvel onglet.");
-          } else {
-            throw popupErr;
-          }
-        }
-      } else if (isMobile) {
-        console.log("Auth: On mobile, using redirect...");
-        await signInWithGoogleRedirect();
-      } else {
-        console.log("Auth: On desktop, attempting popup...");
-        try {
-          await signInWithGooglePopup();
-          console.log("Auth: Popup success");
-        } catch (popupErr: any) {
-          console.warn("Auth: Popup failed, falling back to redirect:", popupErr.code);
-          if (popupErr.code === 'auth/popup-blocked' || popupErr.code === 'auth/popup-closed-by-user') {
-            console.log("Auth: Falling back to redirect...");
-            await signInWithGoogleRedirect();
-          } else {
-            throw popupErr;
-          }
-        }
-      }
+      setAppError(null);
+      await signInWithGoogle();
     } catch (err: any) {
-      console.error("Auth: Final error:", err);
+      console.error("Auth: Sign in failed:", err);
+      const appErr = handleAppError(err);
+      
+      // Provide clearer message for popup blocked
       if (err.code === 'auth/popup-blocked') {
-        setError("Le popup de connexion a été bloqué. Veuillez autoriser les popups pour ce site.");
-      } else if (err.code === 'auth/cancelled-popup-request' || err.code === 'auth/popup-closed-by-user') {
-        // Ignore
-      } else if (err.code === 'auth/unauthorized-domain') {
-        setError("Ce domaine n'est pas autorisé dans la console Firebase. Veuillez ajouter " + window.location.hostname + " aux domaines autorisés.");
-      } else {
-        setError("Erreur de connexion : " + (err.message || "Inconnue"));
+        appErr.action = "Le navigateur a bloqué le popup. Veuillez cliquer sur l'icône de blocage dans la barre d'adresse pour l'autoriser, ou ouvrez l'application dans un nouvel onglet.";
       }
+      
+      setAppError(appErr);
     }
   };
 
@@ -255,12 +284,10 @@ export default function App() {
         }
 
         const ai = new GoogleGenAI({ apiKey });
-        // Just check if we can access the model info
-        await ai.models.get({ model: "gemini-1.5-flash" }); 
         
         // Try a very small generation to be sure
         const response = await ai.models.generateContent({
-          model: "gemini-1.5-flash",
+          model: "gemini-3-flash-preview",
           contents: "test",
           config: { maxOutputTokens: 1 }
         });
@@ -286,13 +313,13 @@ export default function App() {
     if (!saveApiKey) {
       localStorage.removeItem('gemini_api_key');
       localStorage.setItem('save_gemini_key', 'false');
-    } else if (isKeyValid && apiKey) {
-      localStorage.setItem('gemini_api_key', apiKey);
-      localStorage.setItem('save_gemini_key', 'true');
     } else {
+      if (apiKey) {
+        localStorage.setItem('gemini_api_key', apiKey);
+      }
       localStorage.setItem('save_gemini_key', 'true');
     }
-  }, [saveApiKey, isKeyValid, apiKey]);
+  }, [saveApiKey, apiKey]);
 
   // Admin Data Fetcher
   useEffect(() => {
@@ -327,10 +354,8 @@ export default function App() {
     return () => unsubStats();
   }, [isAdmin]);
   
-  // Logic: All authenticated users get to use the system key, but limited.
-  // Unauthenticated users must provide their own key (or login).
-  const canUseSystemKey = !!user;
-  const activeApiKey = (canUseSystemKey && process.env.GEMINI_API_KEY) ? process.env.GEMINI_API_KEY : apiKey;
+  // BYOK Architecture: Every user must provide their own key.
+  const activeApiKey = apiKey;
 
   const getRecentGenerations = () => {
     if (!usage) return [];
@@ -354,11 +379,6 @@ export default function App() {
     return `${hours}h ${minutes}m`;
   };
 
-  // Persist API Key
-  useEffect(() => {
-    localStorage.setItem('gemini_api_key', apiKey);
-  }, [apiKey]);
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const selectedFile = e.target.files[0];
@@ -366,7 +386,17 @@ export default function App() {
       setFilePreview(URL.createObjectURL(selectedFile));
       setStatus('idle');
       setResultUrl(null);
-      setError(null);
+      setAppError(null);
+    }
+  };
+
+  const handleRemoveFile = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setFile(null);
+    setFilePreview(null);
+    setAppError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
@@ -376,6 +406,12 @@ export default function App() {
       setRefFile(selectedFile);
       setRefPreview(URL.createObjectURL(selectedFile));
     }
+  };
+
+  const handleRemoveRefFile = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRefFile(null);
+    setRefPreview(null);
   };
 
   // Cleanup previews
@@ -389,7 +425,7 @@ export default function App() {
   const downloadFile = async () => {
     if (!resultUrl) return;
     try {
-      const response = await fetch(resultUrl);
+      const response = await fetch(`${window.location.origin}${resultUrl}`, { credentials: 'include' });
       if (!response.ok) throw new Error('Download failed');
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -402,6 +438,7 @@ export default function App() {
       document.body.removeChild(a);
     } catch (err) {
       console.error('Download error:', err);
+      setAppError(handleAppError(err));
       // Fallback
       window.open(resultUrl, '_blank');
     }
@@ -422,26 +459,24 @@ export default function App() {
   const processVideo = async () => {
     if (!file) return;
     
-    if (!activeApiKey) {
-      setError("Veuillez vous connecter ou entrer votre clé API Gemini pour continuer.");
-      return;
-    }
-
-    if (isLimitReached) {
-      setError(`Limite atteinte. Prochain crédit disponible dans ${getWaitTime()}.`);
+    const currentApiKey = localStorage.getItem('gemini_api_key') || apiKey;
+    
+    if (!currentApiKey) {
+      setAppError({
+        type: ErrorType.API_KEY,
+        message: "Veuillez configurer votre clé API Gemini dans les paramètres pour continuer.",
+        action: "Saisissez votre clé API dans le champ dédié."
+      });
       return;
     }
 
     try {
-      if (!user && isKeyValid === false) {
-        throw new Error("Veuillez fournir une clé API valide avant de continuer.");
-      }
-      if (!user && !apiKey) {
-        throw new Error("Veuillez vous connecter ou fournir une clé API Gemini.");
+      if (isKeyValid === false) {
+        throw new Error("Clé API invalide (Erreur 401). Veuillez vérifier votre clé sur Google AI Studio.");
       }
       
       setStatus('uploading');
-      setError(null);
+      setAppError(null);
 
       // 1. Upload to server
       if (file.size > 50 * 1024 * 1024) {
@@ -454,9 +489,11 @@ export default function App() {
         formData.append('reference', refFile);
       }
 
-      const uploadRes = await fetch('/api/upload-multi', {
+      const uploadRes = await fetch(`${window.location.origin}/api/upload-multi`, {
         method: 'POST',
         body: formData,
+        credentials: 'include',
+        mode: 'cors',
       });
 
       const uploadText = await uploadRes.text();
@@ -482,7 +519,7 @@ export default function App() {
 
       // 2. Transcription & Translation via Gemini
       setStatus('processing');
-      const ai = new GoogleGenAI({ apiKey: activeApiKey });
+      const ai = new GoogleGenAI({ apiKey: currentApiKey });
       const base64Data = await fileToBase64(file);
       
       let refBase64 = null;
@@ -499,12 +536,22 @@ export default function App() {
         2. Transcribe the audio in its original language with precise timestamps.
         3. Translate each segment into the other language (EN -> FR or FR -> EN).
         ${useDynamicEmojis ? "4. Add 1 to 3 highly relevant and expressive emojis (e.g., 😂, 😭, 😞, 😌, 🤣, 😒, 🔥, 💀, ✊, 💸, ❣️, 💔, 🙃, 👏, 🙄, 🤛, 😮, 😦, 🤔, 🥳, 👆, 😁, 🎉, 😍, 🤩, 😱, 😛, 🤪, 🥺, 🥱, 😡, 🤨, 🤯, 🤡, 😈, 👽, 💯, 👀, 👄, 👅, 🫀, 🧠, 🫁, 👎, 👂, 💪, 🤞, ✌️, 🤝, 🖕, 🙏, 🌻, 🌼, 🌪️, 🌈, 🌟, 🌍, 🥒, 🍑, 🚧, 🚨, ✈️, 🚢, 🚘) at the end of each segment. The emojis MUST perfectly match the emotion, tone, and specific keywords of the phrase to make it more engaging." : ""}
-        ${refFile ? "5. Analyze the visual style of subtitles in the REFERENCE video (font color, background, position, size). Return a 'style' object with these properties: primaryColor (hex), outlineColor (hex), fontSize (number), alignment (1-9, where 2 is bottom center)." : ""}
+        ${refFile ? `5. Analyze the visual style of subtitles in the REFERENCE video. You MUST extract the style to make the TARGET video's subtitles STRICTLY IDENTICAL to the REFERENCE video. 
+        Look for:
+        - Primary text color (hex)
+        - Outline/border color (hex)
+        - Font size (estimate for 1280x720 resolution, usually between 20 and 60)
+        - Alignment (1-9 using ASS/SSA standard: 1=BottomLeft, 2=BottomCenter, 3=BottomRight, 4=MiddleLeft, 5=MiddleCenter, 6=MiddleRight, 7=TopLeft, 8=TopCenter, 9=TopRight)
+        - Font name (detect the closest standard font: Arial, Roboto, Consolas, Times New Roman, Verdana, Georgia, Courier New, Impact, Arial Black)
+        - Animation (detect if subtitles fade in/out: 'fade' or 'none')
+        - Background style (detect if there is a background box: 'none' or 'semi-transparent-box')
+        
+        This is CRITICAL. Return a 'style' object with these properties: primaryColor, outlineColor, fontSize, alignment, fontName, animation, backgroundStyle.` : ""}
         
         Return ONLY a JSON object with this structure:
         {
           "segments": [{"start": number, "end": number, "original": string, "translated": string}],
-          "style": { "primaryColor": "string", "outlineColor": "string", "fontSize": number, "alignment": number },
+          "style": { "primaryColor": "string", "outlineColor": "string", "fontSize": number, "alignment": number, "fontName": "string", "animation": "string", "backgroundStyle": "string" },
           "detectedLanguage": "string"
         }
         The 'start' and 'end' should be in seconds.
@@ -542,10 +589,10 @@ export default function App() {
       } catch (geminiErr: any) {
         console.error('Gemini API Error:', geminiErr);
         const msg = geminiErr.message || '';
-        if (msg.includes('API_KEY_INVALID') || msg.includes('invalid') || msg.includes('key')) {
-          throw new Error('Clé API invalide ou expirée. Veuillez vérifier votre clé Gemini.');
+        if (msg.includes('401') || msg.includes('API_KEY_INVALID') || msg.includes('invalid') || msg.includes('key')) {
+          throw new Error('Clé API invalide (Erreur 401). Veuillez vérifier votre clé sur Google AI Studio.');
         } else if (msg.includes('quota') || msg.includes('429')) {
-          throw new Error('Quota dépassé. Veuillez réessayer plus tard ou utiliser votre propre clé API.');
+          throw new Error('Quota dépassé. Veuillez réessayer plus tard ou vérifier votre facturation sur Google AI Studio.');
         }
         throw new Error(`Erreur Gemini: ${msg}`);
       }
@@ -562,6 +609,11 @@ export default function App() {
       const inferredStyle = aiResult.style || null;
       const detectedLanguage = aiResult.detectedLanguage || 'Inconnu';
 
+      // Merge inferred style with customStyle to ensure all properties are present
+      const finalStyle = (refFile && inferredStyle) 
+        ? { ...customStyle, ...inferredStyle } 
+        : customStyle;
+
       // Filter segments based on selected mode
       const segments = rawSegments.map((seg: any) => {
         if (subtitleMode === 'original') return { ...seg, translated: '' };
@@ -570,10 +622,12 @@ export default function App() {
       });
 
       // 3. Burn Subtitles (Backend)
-      const burnRes = await fetch('/api/burn-subtitles', {
+      const burnRes = await fetch(`${window.location.origin}/api/burn-subtitles`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename, segments, style: inferredStyle }),
+        body: JSON.stringify({ filename, segments, style: finalStyle }),
+        credentials: 'include',
+        mode: 'cors',
       });
 
     if (!burnRes.ok) {
@@ -634,7 +688,7 @@ export default function App() {
     } catch (err) {
       console.error('Process error:', err);
       setStatus('error');
-      setError(err instanceof Error ? err.message : 'Une erreur est survenue');
+      setAppError(handleAppError(err));
     }
   };
 
@@ -645,31 +699,31 @@ export default function App() {
 
   const onboardingSteps = [
     {
-      title: "Bienvenue sur EcoSub AI ✨",
+      title: "Bienvenue sur EcoSub AI",
       description: "Transformez vos vidéos en contenus bilingues élégants en quelques secondes grâce à la puissance de Gemini 1.5 Flash.",
       icon: <Sparkles className="w-12 h-12 text-[#FF4D00]" />,
       image: "https://picsum.photos/seed/welcome/400/250"
     },
     {
-      title: "1. Vidéo Cible 🎯",
+      title: "1. Vidéo Cible",
       description: "Déposez la vidéo que vous souhaitez sous-titrer. Nous détecterons automatiquement si elle est en Français ou en Anglais.",
       icon: <Upload className="w-12 h-12 text-[#FF4D00]" />,
       image: "https://picsum.photos/seed/upload/400/250"
     },
     {
-      title: "2. Style de Référence (Optionnel) 🎨",
+      title: "2. Style de Référence (Optionnel)",
       description: "Vous aimez le style d'un autre créateur ? Déposez une vidéo de référence et nous copierons automatiquement la couleur, la police et la position de ses sous-titres.",
       icon: <Video className="w-12 h-12 text-[#FF4D00]" />,
       image: "https://picsum.photos/seed/style/400/250"
     },
     {
-      title: "3. Magie de l'IA 🧠",
+      title: "3. Magie de l'IA",
       description: "Notre IA transcrit, traduit et incruste les sous-titres directement dans la vidéo. Vous pouvez même choisir d'ajouter des emojis expressifs automatiquement.",
       icon: <Languages className="w-12 h-12 text-[#FF4D00]" />,
       image: "https://picsum.photos/seed/ai/400/250"
     },
     {
-      title: "4. Téléchargez & Partagez 🚀",
+      title: "4. Téléchargez & Partagez",
       description: "Une fois terminé, prévisualisez votre vidéo et téléchargez-la. Vos crédits gratuits se rechargent toutes les 24 heures !",
       icon: <Download className="w-12 h-12 text-[#FF4D00]" />,
       image: "https://picsum.photos/seed/share/400/250"
@@ -825,6 +879,26 @@ export default function App() {
                   <LogOut className="w-4 h-4" />
                 </button>
               </div>
+            ) : isKeyValid ? (
+              <div className="flex items-center gap-3">
+                <div className="text-right hidden sm:block">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-black/40">Connecté via</p>
+                  <p className="text-xs font-medium text-emerald-600">Clé API Gemini</p>
+                </div>
+                <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center border border-emerald-100">
+                  <Key className="w-4 h-4 text-emerald-500" />
+                </div>
+                <button 
+                  onClick={() => {
+                    setApiKey('');
+                    setIsKeyValid(null);
+                  }}
+                  className="p-2 hover:bg-black/5 rounded-full transition-colors text-black/40 hover:text-red-500"
+                  title="Retirer la clé"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
             ) : (
               <button 
                 onClick={handleGoogleSignIn}
@@ -939,31 +1013,37 @@ export default function App() {
               layout
               className="bg-white border border-black/10 rounded-3xl p-5 sm:p-8 shadow-2xl shadow-black/5 min-h-[400px] flex flex-col justify-center"
             >
-              {error && (
+              {appError && (
                 <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl">
                   <div className="flex items-start gap-3">
                     <div className="w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0 mt-0.5">!</div>
                     <div className="flex-grow">
-                      <p className="text-sm text-red-600 font-medium">{error}</p>
-                      {error.includes("domaine n'est pas autorisé") && (
-                        <div className="mt-2 p-3 bg-white/50 rounded-xl text-[10px] text-red-500 space-y-1">
-                          <p className="font-bold uppercase tracking-widest opacity-70">Action requise :</p>
-                          <p>1. Allez dans la console Firebase &gt; Authentification &gt; Paramètres &gt; Domaines autorisés.</p>
-                          <p>2. Ajoutez ce domaine : <code className="bg-red-100 px-1 rounded">{window.location.hostname}</code></p>
+                      <p className="text-sm text-red-600 font-medium">{appError.message}</p>
+                      {appError.details && <p className="text-[10px] text-red-500 mt-1">{appError.details}</p>}
+                      {appError.action && (
+                        <div className="mt-2 p-3 bg-white/50 rounded-xl text-[10px] text-red-700 space-y-2">
+                          <p className="font-bold uppercase tracking-widest opacity-70">Action recommandée :</p>
+                          <p>{appError.action}</p>
+                          {appError.type === ErrorType.NETWORK && (
+                            <button 
+                              onClick={() => window.location.reload()}
+                              className="w-full py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-bold transition-colors"
+                            >
+                              Réessayer (Recharger)
+                            </button>
+                          )}
                         </div>
                       )}
-                      <button 
-                        onClick={() => {
-                          const debugInfo = `Domain: ${window.location.hostname}\nIframe: ${window.self !== window.top}\nAuthDomain: ${auth.app.options.authDomain}\nUserAgent: ${navigator.userAgent}`;
-                          console.log("Auth Debug Info:", debugInfo);
-                          alert(debugInfo);
-                        }}
-                        className="mt-2 text-[10px] font-bold uppercase tracking-widest text-red-400 hover:text-red-600 transition-colors"
-                      >
-                        Afficher les infos de diagnostic
-                      </button>
+                      {appError.type === ErrorType.AUTH && appError.message.includes("autorisé") && (
+                        <button 
+                          onClick={() => window.open(window.location.href, '_blank')}
+                          className="mt-2 text-[10px] font-bold uppercase tracking-widest text-red-400 hover:text-red-600 transition-colors flex items-center gap-1"
+                        >
+                          Ouvrir dans un nouvel onglet <ExternalLink className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
-                    <button onClick={() => setError(null)} className="text-red-300 hover:text-red-500">
+                    <button onClick={() => setAppError(null)} className="text-red-300 hover:text-red-500">
                       <X className="w-4 h-4" />
                     </button>
                   </div>
@@ -978,128 +1058,64 @@ export default function App() {
                     exit={{ opacity: 0, y: -10 }}
                     className="text-center space-y-6"
                   >
-                    {/* Usage Info for Authenticated Users */}
-                    {user && !isAdmin && (
-                      <div className="bg-black/5 rounded-2xl p-5 flex flex-col gap-3 text-left border border-black/5">
-                        <div className="flex justify-between items-end">
-                          <div>
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-black/40 mb-1">Utilisation de l'IA</p>
-                            <h4 className="text-sm font-bold">Crédits Quotidiens</h4>
+                    {/* API Key Input - BYOK Architecture */}
+                    <div className="space-y-4">
+                      <div className="flex flex-col gap-2 text-left bg-black/5 p-5 rounded-2xl border border-black/5">
+                        <div className="flex justify-between items-center mb-2">
+                          <div className="flex items-center gap-2">
+                            <Key className="w-4 h-4 text-[#FF4D00]" />
+                            <label className="text-xs font-bold uppercase tracking-widest text-black/60">Configuration Clé API (BYOK)</label>
                           </div>
-                          <div className="text-right">
-                            <span className={`text-lg font-bold ${remainingCredits > 0 ? 'text-emerald-600' : 'text-[#FF4D00]'}`}>
-                              {remainingCredits}
-                            </span>
-                            <span className="text-xs text-black/40 font-medium"> / {DAILY_LIMIT}</span>
-                          </div>
-                        </div>
-                        
-                        <div className="relative w-full bg-black/10 h-2 rounded-full overflow-hidden">
-                          <motion.div 
-                            initial={{ width: 0 }}
-                            animate={{ width: `${(remainingCredits / DAILY_LIMIT) * 100}%` }}
-                            className={`h-full transition-all duration-1000 ${remainingCredits > 0 ? 'bg-emerald-500' : 'bg-[#FF4D00]'}`}
-                          />
-                        </div>
-
-                        {isLimitReached ? (
-                          <div className="flex items-center gap-2 text-[#FF4D00] bg-[#FF4D00]/5 p-3 rounded-xl border border-[#FF4D00]/10">
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            <p className="text-[11px] font-medium leading-tight">
-                              Limite atteinte. <br />
-                              <span className="font-bold">Prochain crédit disponible dans {getWaitTime()}</span>
-                            </p>
-                          </div>
-                        ) : (
-                          <p className="text-[10px] text-black/40 italic">
-                            Chaque génération consomme 1 crédit. Recharge automatique après 24h.
-                          </p>
-                        )}
-                      </div>
-                    )}
-
-                    {/* API Key Input - Only show if NOT logged in */}
-                    {!user && (
-                      <div className="space-y-4">
-                        <div className="bg-[#FF4D00]/5 border border-[#FF4D00]/10 rounded-2xl p-5 text-left space-y-3">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-[#FF4D00] rounded-full flex items-center justify-center shrink-0">
-                              <LogIn className="text-white w-4 h-4" />
-                            </div>
-                            <p className="text-xs font-bold text-[#FF4D00]">Utilisez l'IA Gratuitement</p>
-                          </div>
-                          <p className="text-[11px] text-black/60 leading-relaxed">
-                            Connectez-vous avec Google pour profiter de 3 générations gratuites par jour sans avoir besoin de clé API.
-                          </p>
-                          <button 
-                            onClick={handleGoogleSignIn}
-                            className="w-full py-2.5 bg-black text-white rounded-xl text-xs font-bold hover:bg-black/80 transition-all active:scale-[0.98]"
+                          <a 
+                            href="https://aistudio.google.com/app/apikey" 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-[#FF4D00] hover:underline font-bold flex items-center gap-1"
                           >
-                            Se connecter avec Google
+                            Obtenir une clé <ExternalLink className="w-3 h-3" />
+                          </a>
+                        </div>
+                        <p className="text-[11px] text-black/50 mb-2">
+                          Cette application utilise votre propre clé API Gemini. Elle est stockée localement et de manière sécurisée dans votre navigateur.
+                        </p>
+                        <div className="relative">
+                          <input 
+                            type="password"
+                            value={apiKey}
+                            onChange={(e) => setApiKey(e.target.value)}
+                            placeholder="Collez votre clé API Gemini ici..."
+                            className={`w-full px-4 py-3 bg-white border rounded-xl text-xs focus:outline-none transition-all ${
+                              isKeyValid === true ? 'border-emerald-500/50 focus:border-emerald-500' : 
+                              isKeyValid === false ? 'border-red-500/50 focus:border-red-500' : 
+                              'border-black/10 focus:border-[#FF4D00]/50'
+                            }`}
+                          />
+                          <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                            {isKeyValidating && <Loader2 className="w-4 h-4 text-[#FF4D00] animate-spin" />}
+                            {!isKeyValidating && isKeyValid === true && <CheckCircle className="w-4 h-4 text-emerald-500" />}
+                            {!isKeyValidating && isKeyValid === false && <div className="w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[8px] text-white font-bold">!</div>}
+                          </div>
+                        </div>
+                        {keyValidationError && (
+                          <p className="text-[10px] text-red-500 font-bold mt-1 ml-1">{keyValidationError}</p>
+                        )}
+                        {isKeyValid === true && (
+                          <p className="text-[10px] text-emerald-600 font-bold mt-1 ml-1">✓ Clé API valide et prête à l'emploi</p>
+                        )}
+                        
+                        <div className="flex items-center gap-2 mt-3 ml-1">
+                          <button 
+                            onClick={() => setSaveApiKey(!saveApiKey)}
+                            className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${saveApiKey ? 'bg-[#FF4D00] border-[#FF4D00]' : 'border-black/20 bg-white'}`}
+                          >
+                            {saveApiKey && <CheckCircle className="w-3 h-3 text-white" />}
                           </button>
-                          <div className="text-center">
-                            <p className="text-[9px] text-black/40">
-                              Problème de connexion ? <a href={window.location.href} target="_blank" rel="noopener noreferrer" className="text-[#FF4D00] hover:underline font-bold">Ouvrir dans un nouvel onglet</a>
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="relative flex items-center py-2">
-                          <div className="flex-grow border-t border-black/5"></div>
-                          <span className="flex-shrink mx-4 text-[10px] font-bold uppercase tracking-widest text-black/20">OU</span>
-                          <div className="flex-grow border-t border-black/5"></div>
-                        </div>
-
-                        <div className="flex flex-col gap-2 text-left">
-                          <div className="flex justify-between items-center">
-                            <label className="text-[10px] font-bold uppercase tracking-widest text-black/40">Utiliser ma propre clé API</label>
-                            <a 
-                              href="https://aistudio.google.com/app/apikey" 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-[10px] text-[#FF4D00] hover:underline font-bold"
-                            >
-                              Obtenir une clé
-                            </a>
-                          </div>
-                          <div className="relative">
-                            <input 
-                              type="password"
-                              value={apiKey}
-                              onChange={(e) => setApiKey(e.target.value)}
-                              placeholder="Collez votre clé API ici..."
-                              className={`w-full px-4 py-3 bg-black/5 border rounded-xl text-xs focus:outline-none transition-all ${
-                                isKeyValid === true ? 'border-emerald-500/30 bg-emerald-50/30' : 
-                                isKeyValid === false ? 'border-red-500/30 bg-red-50/30' : 
-                                'border-black/5 focus:border-[#FF4D00]/30'
-                              }`}
-                            />
-                            <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                              {isKeyValidating && <Loader2 className="w-4 h-4 text-[#FF4D00] animate-spin" />}
-                              {!isKeyValidating && isKeyValid === true && <CheckCircle className="w-4 h-4 text-emerald-500" />}
-                              {!isKeyValidating && isKeyValid === false && <div className="w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[8px] text-white font-bold">!</div>}
-                              <Key className={`w-4 h-4 ${isKeyValid === true ? 'text-emerald-500/40' : isKeyValid === false ? 'text-red-500/40' : 'text-black/20'}`} />
-                            </div>
-                          </div>
-                          {keyValidationError && (
-                            <p className="text-[9px] text-red-500 font-bold mt-1 ml-1">{keyValidationError}</p>
-                          )}
-                          {isKeyValid === true && (
-                            <p className="text-[9px] text-emerald-600 font-bold mt-1 ml-1">✓ Clé API valide et prête à l'emploi (Illimité)</p>
-                          )}
-                          
-                          <div className="flex items-center gap-2 mt-2 ml-1">
-                            <button 
-                              onClick={() => setSaveApiKey(!saveApiKey)}
-                              className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${saveApiKey ? 'bg-[#FF4D00] border-[#FF4D00]' : 'border-black/20 bg-white'}`}
-                            >
-                              {saveApiKey && <CheckCircle className="w-3 h-3 text-white" />}
-                            </button>
-                            <span className="text-[10px] text-black/60 font-medium">Sauvegarder cette clé sur cet appareil</span>
-                          </div>
+                          <span className="text-xs text-black/70 font-medium cursor-pointer" onClick={() => setSaveApiKey(!saveApiKey)}>
+                            Sauvegarder la clé (localStorage)
+                          </span>
                         </div>
                       </div>
-                    )}
+                    </div>
 
                     {isAdmin && (
                       <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 flex items-center gap-3 text-left">
@@ -1128,11 +1144,18 @@ export default function App() {
                         {filePreview ? (
                           <div className="absolute inset-0 bg-black">
                             <video src={filePreview} className="w-full h-full object-cover opacity-60" muted />
-                            <div className="absolute inset-0 flex flex-col items-center justify-center p-2 bg-black/20">
+                            <div className="absolute inset-0 flex flex-col items-center justify-center p-2 bg-black/40">
                               <Play className="w-6 h-6 text-white mb-1" />
-                              <p className="text-[10px] font-bold text-white uppercase tracking-widest truncate max-w-full">
+                              <p className="text-[10px] font-bold text-white uppercase tracking-widest truncate max-w-full px-4">
                                 {file?.name}
                               </p>
+                              <button 
+                                onClick={handleRemoveFile}
+                                className="mt-3 px-3 py-1.5 bg-red-500/80 hover:bg-red-500 text-white rounded-full text-[10px] font-bold uppercase tracking-widest transition-colors flex items-center gap-1"
+                              >
+                                <X className="w-3 h-3" />
+                                Retirer
+                              </button>
                             </div>
                           </div>
                         ) : (
@@ -1159,11 +1182,18 @@ export default function App() {
                         {refPreview ? (
                           <div className="absolute inset-0 bg-black">
                             <video src={refPreview} className="w-full h-full object-cover opacity-60" muted />
-                            <div className="absolute inset-0 flex flex-col items-center justify-center p-2 bg-black/20">
+                            <div className="absolute inset-0 flex flex-col items-center justify-center p-2 bg-black/40">
                               <Video className="w-6 h-6 text-white mb-1" />
-                              <p className="text-[10px] font-bold text-white uppercase tracking-widest truncate max-w-full">
+                              <p className="text-[10px] font-bold text-white uppercase tracking-widest truncate max-w-full px-4">
                                 {refFile?.name}
                               </p>
+                              <button 
+                                onClick={handleRemoveRefFile}
+                                className="mt-3 px-3 py-1.5 bg-red-500/80 hover:bg-red-500 text-white rounded-full text-[10px] font-bold uppercase tracking-widest transition-colors flex items-center gap-1"
+                              >
+                                <X className="w-3 h-3" />
+                                Retirer
+                              </button>
                             </div>
                           </div>
                         ) : (
@@ -1180,11 +1210,11 @@ export default function App() {
                     <div className="flex items-center justify-between bg-black/5 p-4 rounded-xl border border-black/5">
                       <div className="flex items-center gap-3">
                         <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${useDynamicEmojis ? 'bg-[#FF4D00] text-white' : 'bg-black/10 text-black/40'}`}>
-                          <span className="text-sm">✨</span>
+                          <Sparkles className="w-4 h-4" />
                         </div>
                         <div className="text-left">
-                          <p className="text-xs font-bold">Emojis Expressifs ✨</p>
-                          <p className="text-[10px] text-black/40">Ajoute des emojis réels (😂, 😭, 🔥) qui correspondent au sens des mots</p>
+                          <p className="text-xs font-bold">Emojis Expressifs</p>
+                          <p className="text-[10px] text-black/40">Ajoute des emojis réels qui correspondent au sens des mots</p>
                         </div>
                       </div>
                       <button 
@@ -1221,6 +1251,204 @@ export default function App() {
                         ))}
                       </div>
                     </div>
+
+                    {/* Subtitle Style Selection */}
+                    <div className="flex flex-col gap-3">
+                      <div className="flex justify-between items-center">
+                        <p className="text-xs font-bold uppercase tracking-widest text-black/40 text-left">Style des sous-titres</p>
+                        <button 
+                          onClick={() => setShowStyleEditor(!showStyleEditor)}
+                          className={`text-[10px] font-bold flex items-center gap-1 transition-colors ${showStyleEditor ? 'text-[#FF4D00]' : 'text-black/40 hover:text-[#FF4D00]'}`}
+                        >
+                          <Settings2 className="w-3 h-3" />
+                          {showStyleEditor ? 'Fermer l\'éditeur' : 'Personnaliser'}
+                        </button>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {Object.entries(PRESET_STYLES).map(([id, preset]) => (
+                          <button
+                            key={id}
+                            onClick={() => {
+                              setSelectedPreset(id);
+                              setCustomStyle(preset.style);
+                              setShowStyleEditor(false);
+                            }}
+                            className={`py-2 px-2 text-[10px] font-bold rounded-lg border transition-all flex flex-col items-center gap-1 ${
+                              selectedPreset === id && !showStyleEditor
+                                ? 'bg-black text-white border-black' 
+                                : 'bg-white border-black/10 text-black/60 hover:border-black/30'
+                            }`}
+                          >
+                            <span>{preset.name}</span>
+                            <div 
+                              className="w-full h-1 rounded-full" 
+                              style={{ backgroundColor: preset.style.primaryColor, border: `1px solid ${preset.style.outlineColor}` }}
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Style Editor Panel */}
+                    <AnimatePresence>
+                      {showStyleEditor && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="bg-black/5 p-5 rounded-2xl border border-black/5 space-y-4">
+                            <div className="flex justify-between items-center border-b border-black/5 pb-2">
+                              <h4 className="text-xs font-bold uppercase tracking-widest text-black/60 flex items-center gap-2">
+                                <Palette className="w-3 h-3" /> Éditeur de Style
+                              </h4>
+                              <button onClick={() => setShowStyleEditor(false)} className="text-black/40 hover:text-black">
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-black/40 uppercase">Couleur Principale</label>
+                                <div className="flex items-center gap-2">
+                                  <input 
+                                    type="color" 
+                                    value={customStyle.primaryColor}
+                                    onChange={(e) => {
+                                      setCustomStyle({...customStyle, primaryColor: e.target.value});
+                                      setSelectedPreset('custom');
+                                    }}
+                                    className="w-8 h-8 rounded cursor-pointer bg-transparent"
+                                  />
+                                  <span className="text-[10px] font-mono">{customStyle.primaryColor}</span>
+                                </div>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-black/40 uppercase">Couleur Contour</label>
+                                <div className="flex items-center gap-2">
+                                  <input 
+                                    type="color" 
+                                    value={customStyle.outlineColor}
+                                    onChange={(e) => {
+                                      setCustomStyle({...customStyle, outlineColor: e.target.value});
+                                      setSelectedPreset('custom');
+                                    }}
+                                    className="w-8 h-8 rounded cursor-pointer bg-transparent"
+                                  />
+                                  <span className="text-[10px] font-mono">{customStyle.outlineColor}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-black/40 uppercase flex items-center gap-1">
+                                  <Type className="w-2 h-2" />
+                                  Taille Police ({customStyle.fontSize}px)
+                                </label>
+                                <input 
+                                  type="range" min="12" max="72" step="1"
+                                  value={customStyle.fontSize}
+                                  onChange={(e) => {
+                                    setCustomStyle({...customStyle, fontSize: parseInt(e.target.value)});
+                                    setSelectedPreset('custom');
+                                  }}
+                                  className="w-full h-1 bg-black/10 rounded-lg appearance-none cursor-pointer accent-[#FF4D00]"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-black/40 uppercase">Police</label>
+                                <select 
+                                  value={customStyle.fontName}
+                                  onChange={(e) => {
+                                    setCustomStyle({...customStyle, fontName: e.target.value});
+                                    setSelectedPreset('custom');
+                                  }}
+                                  className="w-full p-2 bg-white border border-black/10 rounded-lg text-[10px] focus:outline-none"
+                                >
+                                  <option value="Arial">Arial</option>
+                                  <option value="Roboto">Roboto</option>
+                                  <option value="Consolas">Consolas</option>
+                                  <option value="Verdana">Verdana</option>
+                                  <option value="Impact">Impact</option>
+                                  <option value="Arial Black">Arial Black</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-black/40 uppercase flex items-center gap-1">
+                                  <AlignCenter className="w-2 h-2" />
+                                  Alignement
+                                </label>
+                                <div className="grid grid-cols-3 gap-1">
+                                  {[7, 8, 9, 4, 5, 6, 1, 2, 3].map(pos => (
+                                    <button
+                                      key={pos}
+                                      onClick={() => {
+                                        setCustomStyle({...customStyle, alignment: pos});
+                                        setSelectedPreset('custom');
+                                      }}
+                                      className={`p-1 border rounded transition-colors flex items-center justify-center ${customStyle.alignment === pos ? 'bg-[#FF4D00] border-[#FF4D00] text-white' : 'bg-white border-black/10 text-black/40 hover:border-black/30'}`}
+                                      title={`Alignement ${pos}`}
+                                    >
+                                      <div className={`w-2 h-2 bg-current rounded-sm ${pos === 2 ? 'mb-0.5' : ''}`} />
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-black/40 uppercase">Ombre ({customStyle.shadow}px)</label>
+                                  <input 
+                                    type="range" min="0" max="10" step="0.5"
+                                    value={customStyle.shadow}
+                                    onChange={(e) => {
+                                      setCustomStyle({...customStyle, shadow: parseFloat(e.target.value)});
+                                      setSelectedPreset('custom');
+                                    }}
+                                    className="w-full h-1 bg-black/10 rounded-lg appearance-none cursor-pointer accent-[#FF4D00]"
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <label className="text-[10px] font-bold text-black/40 uppercase">Fond Opaque</label>
+                                  <button 
+                                    onClick={() => {
+                                      setCustomStyle({...customStyle, backgroundStyle: customStyle.backgroundStyle === 'none' ? 'semi-transparent-box' : 'none'});
+                                      setSelectedPreset('custom');
+                                    }}
+                                    className={`w-10 h-5 rounded-full relative transition-colors ${customStyle.backgroundStyle === 'semi-transparent-box' ? 'bg-[#FF4D00]' : 'bg-black/20'}`}
+                                  >
+                                    <motion.div 
+                                      animate={{ x: customStyle.backgroundStyle === 'semi-transparent-box' ? 22 : 2 }}
+                                      className="absolute top-1 w-3 h-3 bg-white rounded-full shadow-sm"
+                                    />
+                                  </button>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <label className="text-[10px] font-bold text-black/40 uppercase">Animation Fondu</label>
+                                  <button 
+                                    onClick={() => {
+                                      setCustomStyle({...customStyle, animation: customStyle.animation === 'none' ? 'fade' : 'none'});
+                                      setSelectedPreset('custom');
+                                    }}
+                                    className={`w-10 h-5 rounded-full relative transition-colors ${customStyle.animation === 'fade' ? 'bg-[#FF4D00]' : 'bg-black/20'}`}
+                                  >
+                                    <motion.div 
+                                      animate={{ x: customStyle.animation === 'fade' ? 22 : 2 }}
+                                      className="absolute top-1 w-3 h-3 bg-white rounded-full shadow-sm"
+                                    />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
 
                     <button
                       disabled={!file}
@@ -1296,26 +1524,35 @@ export default function App() {
                   </motion.div>
                 )}
 
-                {status === 'error' && (
+                {status === 'error' && appError && (
                   <motion.div 
                     key="error"
                     className="text-center space-y-6"
                   >
                     <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto">
-                      <CheckCircle className="w-8 h-8 rotate-45" />
+                      <AlertTriangle className="w-8 h-8" />
                     </div>
                     <div>
                       <h3 className="text-xl font-bold text-red-600">Oups !</h3>
-                      <p className="text-sm text-black/60 mt-2">{error}</p>
-                      {error?.includes("onglet") && (
+                      <p className="text-sm text-black/60 mt-2">{appError.message}</p>
+                      {appError.details && <p className="text-xs text-black/40 mt-1 italic">{appError.details}</p>}
+                      
+                      {appError.action && (
+                        <div className="mt-4 p-4 bg-red-50/50 rounded-xl border border-red-100">
+                          <p className="text-xs text-red-800 font-medium">{appError.action}</p>
+                        </div>
+                      )}
+
+                      {appError.type === ErrorType.COOKIE && (
                         <button 
                           onClick={() => window.open(window.location.href, '_blank')}
-                          className="mt-4 px-4 py-2 bg-[#FF4D00] text-white text-xs font-bold rounded-lg hover:bg-[#E64500] transition-colors"
+                          className="mt-4 w-full py-4 bg-[#FF4D00] text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-[#E64500] transition-colors"
                         >
-                          Ouvrir dans un nouvel onglet
+                          Ouvrir dans un nouvel onglet <ExternalLink className="w-4 h-4" />
                         </button>
                       )}
-                      {(error?.toLowerCase().includes('clé') || error?.toLowerCase().includes('api')) && (
+                      
+                      {appError.type === ErrorType.API_KEY && (
                         <div className="mt-4 p-4 bg-black/5 rounded-xl border border-black/5">
                           <p className="text-[11px] text-black/40 mb-2">Besoin d'une nouvelle clé ?</p>
                           <a 

@@ -29,12 +29,6 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Request Logger
-  app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
-    next();
-  });
-
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -75,25 +69,46 @@ async function startServer() {
 
       const primaryColor = hexToAss(style?.primaryColor || '#FFFFFF');
       const outlineColor = hexToAss(style?.outlineColor || '#000000');
+      const fontName = style?.fontName || 'Arial';
       
       // Check if we have bilingual segments to adjust layout
       const isBilingual = segments.some((seg: any) => seg.original && seg.translated);
       
-      // Optimization: Increase font size and vertical margin for single-language mode
-      // to avoid text being too low or too small.
-      const fontSize = style?.fontSize || (isBilingual ? 14 : 18);
+      // Use a higher resolution for better precision
+      const playResX = 1280;
+      const playResY = 720;
+      
+      // Scale font size based on resolution
+      const fontSize = style?.fontSize || (isBilingual ? 28 : 36);
       const alignment = style?.alignment || 2;
-      const marginV = isBilingual ? 20 : 45; // Higher margin for single line to center it better
+      
+      // Dynamic margin based on alignment (Top, Middle, Bottom)
+      // ASS Alignment: 1-3 (Bottom), 4-6 (Middle), 7-9 (Top)
+      let marginV = 50;
+      if (alignment >= 7) {
+        marginV = 40; // Top margin
+      } else if (alignment >= 4) {
+        marginV = 360; // Middle (approx center of 720p)
+      } else {
+        marginV = isBilingual ? 40 : 60; // Bottom margin
+      }
+      
+      // Handle background style
+      // BorderStyle 1 is outline+shadow, 3 is opaque box
+      const borderStyle = style?.backgroundStyle === 'semi-transparent-box' ? 3 : 1;
+      const backColour = style?.backgroundStyle === 'semi-transparent-box' ? '&H80000000' : '&H00000000';
+      const outline = style?.backgroundStyle === 'semi-transparent-box' ? 1 : 2;
+      const shadow = style?.shadow !== undefined ? style.shadow : 2;
 
       // 1. Generate .ass subtitle file
       const assHeader = `[Script Info]
 ScriptType: v4.00+
-PlayResX: 640
-PlayResY: 360
+PlayResX: ${playResX}
+PlayResY: ${playResY}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Sans-serif,${fontSize},${primaryColor},&H000000FF,${outlineColor},&H00000000,1,0,0,0,100,100,0,0,1,2,2,${alignment},10,10,${marginV},1
+Style: Default,${fontName},${fontSize},${primaryColor},&H000000FF,${outlineColor},${backColour},1,0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},${alignment},50,50,${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -120,7 +135,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           combinedText = seg.original || seg.translated;
         }
         
-        assEvents += `Dialogue: 0,${start},${end},Default,,0,0,0,,${combinedText}\n`;
+        // Handle animation
+        const animationTag = style?.animation === 'fade' ? '{\\fad(200,200)}' : '';
+        
+        assEvents += `Dialogue: 0,${start},${end},Default,,0,0,0,,${animationTag}${combinedText}\n`;
       });
 
       fs.writeFileSync(assPath, assHeader + assEvents);
@@ -177,12 +195,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
+    console.log('Starting Vite in development mode...');
     const vite = await createViteServer({
+      root: path.resolve(process.cwd()),
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
+    console.log('Starting in production mode...');
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
