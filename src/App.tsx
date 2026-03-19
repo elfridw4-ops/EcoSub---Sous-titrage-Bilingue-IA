@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, Component } from 'react';
-import { Upload, Video, CheckCircle, Loader2, Download, Languages, Play, Key, LogIn, LogOut, User, HelpCircle, ChevronRight, ChevronLeft, X, Sparkles, MousePointer2, AlertCircle, AlertTriangle, ExternalLink, ArrowRight, Palette, Type, AlignCenter, Settings2 } from 'lucide-react';
+import { Upload, Video, CheckCircle, Loader2, Download, Languages, Play, Key, LogIn, LogOut, User, HelpCircle, ChevronRight, ChevronLeft, X, Sparkles, MousePointer2, AlertCircle, AlertTriangle, ExternalLink, ArrowRight, Palette, Type, AlignCenter, Settings2, Trash2, History, Database } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from '@google/genai';
 import { auth, signInWithGoogle, logout, db } from './firebase';
 import { handleAppError, AppError, ErrorType } from './utils/errors';
+import { saveVideo, getVideos, deleteVideo, StoredVideo } from './utils/storage';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, arrayUnion, onSnapshot, collection, getDocs, increment } from 'firebase/firestore';
 
@@ -202,6 +203,9 @@ export default function App() {
   const [isKeyValid, setIsKeyValid] = useState<boolean | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem('onboarding_completed'));
   const [onboardingStep, setOnboardingStep] = useState(0);
+  const [localBlobUrl, setLocalBlobUrl] = useState<string | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [storedVideos, setStoredVideos] = useState<StoredVideo[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auth listener
@@ -425,17 +429,67 @@ export default function App() {
     setRefPreview(null);
   };
 
-  // Cleanup previews
+  const handleDeleteStoredVideo = async (id: string) => {
+    try {
+      await deleteVideo(id);
+      const updatedVideos = await getVideos();
+      setStoredVideos(updatedVideos);
+    } catch (err) {
+      console.error('Failed to delete video:', err);
+    }
+  };
+
+  const handleDownloadStoredVideo = (storedVideo: StoredVideo) => {
+    const url = URL.createObjectURL(storedVideo.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `EcoSub_${storedVideo.name}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Load stored videos
+  useEffect(() => {
+    const loadVideos = async () => {
+      try {
+        const videos = await getVideos();
+        setStoredVideos(videos);
+      } catch (err) {
+        console.error('Failed to load stored videos:', err);
+      }
+    };
+    loadVideos();
+  }, []);
+
+  // Cleanup previews and local blob URLs
   useEffect(() => {
     return () => {
       if (filePreview) URL.revokeObjectURL(filePreview);
       if (refPreview) URL.revokeObjectURL(refPreview);
+      if (localBlobUrl) URL.revokeObjectURL(localBlobUrl);
     };
-  }, [filePreview, refPreview]);
+  }, [filePreview, refPreview, localBlobUrl]);
 
   const downloadFile = async () => {
-    if (!resultUrl) return;
+    if (!resultUrl && !localBlobUrl) return;
+    
+    setIsDownloading(true);
     try {
+      // Prioritize local blob if available
+      if (localBlobUrl) {
+        const a = document.createElement('a');
+        a.href = localBlobUrl;
+        a.download = `EcoSub_${file?.name || 'video.mp4'}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setIsDownloading(false);
+        return;
+      }
+
+      // Fallback to fetching from server
       const response = await fetch(`${window.location.origin}${resultUrl}`, { credentials: 'include' });
       if (!response.ok) throw new Error('Download failed');
       const blob = await response.blob();
@@ -450,8 +504,10 @@ export default function App() {
     } catch (err) {
       console.error('Download error:', err);
       setAppError(handleAppError(err));
-      // Fallback
-      window.open(resultUrl, '_blank');
+      // Final fallback
+      if (resultUrl) window.open(resultUrl, '_blank');
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -695,6 +751,34 @@ export default function App() {
       }
 
       setResultUrl(downloadUrl);
+      
+      // 5. Fetch and store locally
+      try {
+        const response = await fetch(`${window.location.origin}${downloadUrl}`, { credentials: 'include' });
+        if (response.ok) {
+          const blob = await response.blob();
+          const localUrl = URL.createObjectURL(blob);
+          setLocalBlobUrl(localUrl);
+          
+          const videoToStore: StoredVideo = {
+            id: crypto.randomUUID(),
+            blob,
+            name: file.name,
+            date: new Date().toISOString(),
+            language: detectedLanguage,
+            mode: subtitleMode
+          };
+          
+          await saveVideo(videoToStore);
+          const updatedVideos = await getVideos();
+          setStoredVideos(updatedVideos);
+        }
+      } catch (fetchErr) {
+        console.error('Failed to fetch video for local storage:', fetchErr);
+        // We don't throw here to not break the UI state 'done', 
+        // but we can inform the user via a non-blocking error if needed.
+      }
+
       setStatus('done');
     } catch (err) {
       console.error('Process error:', err);
@@ -1513,7 +1597,7 @@ export default function App() {
                   </motion.div>
                 )}
 
-                {status === 'done' && resultUrl && (
+                {status === 'done' && (resultUrl || localBlobUrl) && (
                   <motion.div 
                     key="done"
                     initial={{ opacity: 0, scale: 0.95 }}
@@ -1522,7 +1606,7 @@ export default function App() {
                   >
                     <div className="rounded-2xl overflow-hidden border border-black/10 bg-black aspect-video flex items-center justify-center">
                       <video 
-                        src={resultUrl} 
+                        src={localBlobUrl || resultUrl || ''} 
                         controls 
                         className="w-full h-full"
                       />
@@ -1530,16 +1614,25 @@ export default function App() {
                     <div className="flex flex-col sm:flex-row gap-4">
                       <button 
                         onClick={downloadFile}
-                        className="flex-1 bg-[#FF4D00] text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-[#E64500] transition-colors"
+                        disabled={isDownloading}
+                        className="flex-1 bg-[#FF4D00] text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-[#E64500] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        <Download className="w-5 h-5" />
-                        Télécharger
+                        {isDownloading ? (
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : (
+                          <Download className="w-5 h-5" />
+                        )}
+                        {isDownloading ? 'Téléchargement...' : 'Télécharger'}
                       </button>
                       <button 
                         onClick={() => {
                           setStatus('idle');
                           setFile(null);
                           setResultUrl(null);
+                          if (localBlobUrl) {
+                            URL.revokeObjectURL(localBlobUrl);
+                            setLocalBlobUrl(null);
+                          }
                         }}
                         className="px-6 py-4 border border-black/10 rounded-xl font-bold hover:bg-black/5 transition-colors"
                       >
@@ -1605,54 +1698,120 @@ export default function App() {
           </div>
         </div>
 
-        {/* History Section */}
-        {user && usage?.history && usage.history.length > 0 && (
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mt-12 space-y-6"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="text-xl font-bold flex items-center gap-2">
-                <Video className="w-5 h-5 text-[#FF4D00]" />
-                Historique des Générations
-              </h3>
-              <span className="text-[10px] font-bold uppercase tracking-widest text-black/40">
-                {usage.history.length} vidéo{usage.history.length > 1 ? 's' : ''} traitée{usage.history.length > 1 ? 's' : ''}
-              </span>
+        {/* History and Local Storage Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-12">
+          {/* Local Storage */}
+          <div className="space-y-6">
+            <div className="flex items-center gap-2">
+              <Database className="w-5 h-5 text-[#FF4D00]" />
+              <h2 className="text-lg font-bold">Mes Vidéos (Stockage Local)</h2>
             </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {[...usage.history].reverse().map((item, idx) => (
-                <div 
-                  key={idx}
-                  className="bg-white border border-black/5 p-4 rounded-2xl flex items-start gap-4 hover:shadow-lg hover:shadow-black/5 transition-all"
-                >
-                  <div className="w-10 h-10 bg-black/5 rounded-xl flex items-center justify-center shrink-0">
-                    <Video className="w-5 h-5 text-black/20" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold truncate">{item.videoName}</p>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className="text-[10px] text-black/40 flex items-center gap-1">
-                        <Languages className="w-3 h-3" />
-                        {item.language}
-                      </span>
-                      <span className="text-[10px] text-black/40">
-                        {new Date(item.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
-                      </span>
+            
+            <div className="bg-white rounded-3xl border border-black/5 overflow-hidden">
+              {storedVideos.length > 0 ? (
+                <div className="divide-y divide-black/5">
+                  {storedVideos.map((v) => (
+                    <div key={v.id} className="p-4 flex items-center justify-between hover:bg-black/[0.02] transition-colors group">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-black/5 rounded-xl flex items-center justify-center">
+                          <Video className="w-5 h-5 text-black/40" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold truncate max-w-[150px] sm:max-w-[200px]">{v.name}</p>
+                          <p className="text-[10px] text-black/40">
+                            {new Date(v.date).toLocaleDateString()} · {v.language} · {v.mode}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button 
+                          onClick={() => handleDownloadStoredVideo(v)}
+                          className="p-2 hover:bg-[#FF4D00]/10 text-[#FF4D00] rounded-lg transition-colors"
+                          title="Télécharger"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteStoredVideo(v.id)}
+                          className="p-2 hover:bg-red-50 text-red-500 rounded-lg transition-colors"
+                          title="Supprimer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-[9px] font-bold uppercase tracking-tighter bg-black/5 px-2 py-1 rounded text-black/40">
-                      {item.mode}
-                    </span>
-                  </div>
+                  ))}
                 </div>
-              ))}
+              ) : (
+                <div className="p-12 text-center space-y-3">
+                  <div className="w-12 h-12 bg-black/5 rounded-full flex items-center justify-center mx-auto">
+                    <Database className="w-6 h-6 text-black/20" />
+                  </div>
+                  <p className="text-sm text-black/40">Aucune vidéo stockée localement.</p>
+                </div>
+              )}
             </div>
-          </motion.div>
-        )}
+            <p className="text-[10px] text-black/40 px-2">
+              * Les vidéos sont stockées uniquement dans votre navigateur (IndexedDB). 
+              Elles ne sont pas sauvegardées sur nos serveurs.
+            </p>
+          </div>
+
+          {/* Account History */}
+          <div className="space-y-6">
+            <div className="flex items-center gap-2">
+              <History className="w-5 h-5 text-[#FF4D00]" />
+              <h2 className="text-lg font-bold">Historique du Compte</h2>
+            </div>
+            
+            <div className="bg-white rounded-3xl border border-black/5 overflow-hidden">
+              {user ? (
+                usage?.history && usage.history.length > 0 ? (
+                  <div className="divide-y divide-black/5">
+                    {usage.history.slice().reverse().map((item: any, i: number) => (
+                      <div key={i} className="p-4 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-black/5 rounded-xl flex items-center justify-center">
+                            <CheckCircle className="w-5 h-5 text-[#FF4D00]" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold truncate max-w-[150px] sm:max-w-[200px]">{item.videoName}</p>
+                            <p className="text-[10px] text-black/40">
+                              {new Date(item.date).toLocaleDateString()} · {item.language} · {item.mode}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-12 text-center space-y-3">
+                    <div className="w-12 h-12 bg-black/5 rounded-full flex items-center justify-center mx-auto">
+                      <History className="w-6 h-6 text-black/20" />
+                    </div>
+                    <p className="text-sm text-black/40">Votre historique est vide.</p>
+                  </div>
+                )
+              ) : (
+                <div className="p-12 text-center space-y-4">
+                  <div className="w-12 h-12 bg-black/5 rounded-full flex items-center justify-center mx-auto">
+                    <LogIn className="w-6 h-6 text-black/20" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-bold">Connectez-vous</p>
+                    <p className="text-xs text-black/40">Pour conserver un historique de vos générations.</p>
+                  </div>
+                  <button 
+                    onClick={handleGoogleSignIn}
+                    className="px-6 py-2 bg-black text-white rounded-xl text-xs font-bold hover:bg-black/80 transition-all"
+                  >
+                    Se connecter
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </main>
 
       {/* Footer */}

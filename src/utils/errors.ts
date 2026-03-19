@@ -118,6 +118,15 @@ export const handleAppError = (error: any): AppError => {
     };
   }
 
+  if (errorMsg.includes('Download failed') || errorMsg.includes('télécharger')) {
+    return {
+      type: ErrorType.NETWORK,
+      message: "Impossible de télécharger le fichier directement.",
+      details: "La requête a échoué. Cela arrive souvent à cause des restrictions de sécurité du navigateur ou des cookies tiers.",
+      action: "Veuillez essayer d'ouvrir la vidéo dans un nouvel onglet pour la télécharger."
+    };
+  }
+
   // Default
   return {
     type: ErrorType.UNKNOWN,
