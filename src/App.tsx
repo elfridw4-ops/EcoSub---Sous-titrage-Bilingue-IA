@@ -179,7 +179,6 @@ export default function App() {
   const [refFile, setRefFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const [refPreview, setRefPreview] = useState<string | null>(null);
-  const [useDynamicEmojis, setUseDynamicEmojis] = useState(true);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'processing' | 'done' | 'error'>('idle');
   const [subtitleMode, setSubtitleMode] = useState<'bilingual' | 'original' | 'translation'>('bilingual');
   const [selectedPreset, setSelectedPreset] = useState<string>('default');
@@ -602,8 +601,7 @@ export default function App() {
         1. Detect if the language in the TARGET video is English or French.
         2. Transcribe the audio in its original language with precise timestamps.
         3. Translate each segment into the other language (EN -> FR or FR -> EN).
-        ${useDynamicEmojis ? "4. Add 1 to 3 highly relevant and expressive emojis (e.g., 😂, 😭, 😞, 😌, 🤣, 😒, 🔥, 💀, ✊, 💸, ❣️, 💔, 🙃, 👏, 🙄, 🤛, 😮, 😦, 🤔, 🥳, 👆, 😁, 🎉, 😍, 🤩, 😱, 😛, 🤪, 🥺, 🥱, 😡, 🤨, 🤯, 🤡, 😈, 👽, 💯, 👀, 👄, 👅, 🫀, 🧠, 🫁, 👎, 👂, 💪, 🤞, ✌️, 🤝, 🖕, 🙏, 🌻, 🌼, 🌪️, 🌈, 🌟, 🌍, 🥒, 🍑, 🚧, 🚨, ✈️, 🚢, 🚘) at the end of each segment. The emojis MUST perfectly match the emotion, tone, and specific keywords of the phrase to make it more engaging." : ""}
-        ${refFile ? `5. Analyze the visual style of subtitles in the REFERENCE video. You MUST extract the style to make the TARGET video's subtitles STRICTLY IDENTICAL to the REFERENCE video. 
+        ${refFile ? `4. Analyze the visual style of subtitles in the REFERENCE video. You MUST extract the style to make the TARGET video's subtitles STRICTLY IDENTICAL to the REFERENCE video. 
         Look for:
         - Primary text color (hex)
         - Outline/border color (hex)
@@ -811,7 +809,7 @@ export default function App() {
     },
     {
       title: "3. Magie de l'IA",
-      description: "Notre IA transcrit, traduit et incruste les sous-titres directement dans la vidéo. Vous pouvez même choisir d'ajouter des emojis expressifs automatiquement.",
+      description: "Notre IA transcrit, traduit et incruste les sous-titres directement dans la vidéo.",
       icon: <Languages className="w-12 h-12 text-[#FF4D00]" />,
       image: "https://picsum.photos/seed/ai/400/250"
     },
@@ -1334,28 +1332,6 @@ export default function App() {
                           </>
                         )}
                       </div>
-                    </div>
-
-                    {/* Dynamic Emojis Toggle */}
-                    <div className="flex items-center justify-between bg-black/5 p-4 rounded-xl border border-black/5">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${useDynamicEmojis ? 'bg-[#FF4D00] text-white' : 'bg-black/10 text-black/40'}`}>
-                          <Sparkles className="w-4 h-4" />
-                        </div>
-                        <div className="text-left">
-                          <p className="text-xs font-bold">Emojis Expressifs</p>
-                          <p className="text-[10px] text-black/40">Ajoute des emojis réels qui correspondent au sens des mots</p>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={() => setUseDynamicEmojis(!useDynamicEmojis)}
-                        className={`w-12 h-6 rounded-full relative transition-colors ${useDynamicEmojis ? 'bg-[#FF4D00]' : 'bg-black/20'}`}
-                      >
-                        <motion.div 
-                          animate={{ x: useDynamicEmojis ? 24 : 4 }}
-                          className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm"
-                        />
-                      </button>
                     </div>
 
                     {/* Subtitle Mode Selection */}
