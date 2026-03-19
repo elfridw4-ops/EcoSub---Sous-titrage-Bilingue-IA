@@ -207,6 +207,8 @@ export default function App() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [storedVideos, setStoredVideos] = useState<StoredVideo[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const isIframe = window.self !== window.top;
 
   // Auth listener
   useEffect(() => {
@@ -490,7 +492,7 @@ export default function App() {
       }
 
       // Fallback to fetching from server
-      const response = await fetch(`${window.location.origin}${resultUrl}`, { credentials: 'include' });
+      const response = await fetch(resultUrl);
       if (!response.ok) throw new Error('Download failed');
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -556,18 +558,16 @@ export default function App() {
         formData.append('reference', refFile);
       }
 
-      const uploadRes = await fetch(`${window.location.origin}/api/upload-multi`, {
+      const uploadRes = await fetch('/api/upload-multi', {
         method: 'POST',
         body: formData,
-        credentials: 'include',
-        mode: 'cors',
       });
 
       const uploadText = await uploadRes.text();
 
       if (!uploadRes.ok) {
         if (uploadText.includes('Cookie check') || uploadText.includes('Authenticate in new window')) {
-          throw new Error("Votre navigateur bloque les cookies de sécurité. Veuillez ouvrir l'application dans un nouvel onglet ou autoriser les cookies tiers.");
+          throw new Error("Problème de sécurité du navigateur (Cookies tiers bloqués). Veuillez ouvrir l'application dans un nouvel onglet.");
         }
         throw new Error(`Le téléchargement a échoué (${uploadRes.status}): ${uploadText.slice(0, 100)}`);
       }
@@ -577,7 +577,7 @@ export default function App() {
         uploadData = JSON.parse(uploadText);
       } catch (e) {
         if (uploadText.includes('Cookie check') || uploadText.includes('Authenticate in new window')) {
-          throw new Error("Problème de cookies de sécurité. Veuillez ouvrir l'application dans un nouvel onglet (bouton en haut à droite) pour corriger cela.");
+          throw new Error("Problème de sécurité du navigateur (Cookies tiers bloqués). Veuillez ouvrir l'application dans un nouvel onglet.");
         }
         console.error('Upload JSON parse error. Received:', uploadText);
         throw new Error('Le serveur a renvoyé une réponse invalide (pas du JSON).');
@@ -689,12 +689,10 @@ export default function App() {
       });
 
       // 3. Burn Subtitles (Backend)
-      const burnRes = await fetch(`${window.location.origin}/api/burn-subtitles`, {
+      const burnRes = await fetch('/api/burn-subtitles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filename, segments, style: finalStyle }),
-        credentials: 'include',
-        mode: 'cors',
       });
 
     if (!burnRes.ok) {
@@ -754,7 +752,7 @@ export default function App() {
       
       // 5. Fetch and store locally
       try {
-        const response = await fetch(`${window.location.origin}${downloadUrl}`, { credentials: 'include' });
+        const response = await fetch(downloadUrl);
         if (response.ok) {
           const blob = await response.blob();
           const localUrl = URL.createObjectURL(blob);
@@ -1011,6 +1009,29 @@ export default function App() {
       </header>
 
       <main className="max-w-4xl mx-auto p-4 sm:p-8 pt-8 sm:pt-16">
+        {isIframe && (
+          <div className="mb-8 bg-amber-50 border border-amber-200 rounded-2xl p-4 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-amber-100 rounded-full text-amber-600 shrink-0 mt-0.5">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-amber-900 mb-1">Aperçu Intégré Détecté</h3>
+                <p className="text-xs text-amber-800 leading-relaxed">
+                  Vous utilisez l'application dans un iframe. Les navigateurs bloquent souvent les cookies tiers dans ce contexte, ce qui peut empêcher le téléchargement de vidéos.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => window.open(window.location.href, '_blank')}
+              className="shrink-0 w-full sm:w-auto px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+            >
+              <ExternalLink className="w-4 h-4" />
+              Ouvrir dans un nouvel onglet
+            </button>
+          </div>
+        )}
+
         {/* Admin Dashboard */}
         <AnimatePresence>
           {isAdmin && showAdminDash && (

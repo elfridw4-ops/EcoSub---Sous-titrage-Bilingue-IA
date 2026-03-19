@@ -78,9 +78,9 @@ export const handleAppError = (error: any): AppError => {
   if (errorMsg.includes('Cookie check') || errorMsg.includes('Authenticate in new window') || errorMsg.includes('cookies de sécurité')) {
     return {
       type: ErrorType.COOKIE,
-      message: "Problème de cookies de sécurité.",
-      details: "Votre navigateur (souvent sur mobile) bloque les cookies tiers nécessaires au fonctionnement dans l'iframe.",
-      action: "Veuillez ouvrir l'application dans un nouvel onglet (bouton en haut à droite) pour corriger cela."
+      message: "Problème de sécurité du navigateur (Cookies tiers bloqués).",
+      details: "Votre navigateur bloque les cookies nécessaires à l'envoi de la vidéo dans cet aperçu intégré. C'est une restriction de sécurité normale.",
+      action: "Veuillez cliquer sur le bouton 'Ouvrir dans un nouvel onglet' en haut de la page pour utiliser l'application sans restriction."
     };
   }
 
@@ -88,9 +88,9 @@ export const handleAppError = (error: any): AppError => {
     if (isIframe) {
       return {
         type: ErrorType.COOKIE,
-        message: "Erreur de connexion (Cookies/Iframe).",
-        details: "La requête a échoué. Cela arrive souvent dans l'aperçu AI Studio à cause des restrictions de cookies.",
-        action: "Veuillez ouvrir l'application dans un nouvel onglet pour corriger cela."
+        message: "Erreur de connexion (Aperçu Intégré).",
+        details: "Le navigateur a bloqué la requête. Cela est dû aux restrictions de sécurité (cookies tiers) dans l'aperçu AI Studio.",
+        action: "Veuillez cliquer sur le bouton 'Ouvrir dans un nouvel onglet' en haut de la page pour utiliser l'application."
       };
     }
     return {
