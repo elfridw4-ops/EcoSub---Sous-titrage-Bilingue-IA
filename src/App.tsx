@@ -180,6 +180,7 @@ export default function App() {
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const [refPreview, setRefPreview] = useState<string | null>(null);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'processing' | 'done' | 'error'>('idle');
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [subtitleMode, setSubtitleMode] = useState<'bilingual' | 'original' | 'translation'>('bilingual');
   const [selectedPreset, setSelectedPreset] = useState<string>('default');
   const [customStyle, setCustomStyle] = useState<SubtitleStyle>(PRESET_STYLES.default.style);
@@ -557,19 +558,38 @@ export default function App() {
         formData.append('reference', refFile);
       }
 
-      const uploadRes = await fetch('/api/upload-multi', {
-        method: 'POST',
-        body: formData,
-      });
+      setUploadProgress(0);
+      const uploadText = await new Promise<string>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/upload-multi');
+        
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percentComplete = Math.round((event.loaded / event.total) * 100);
+            setUploadProgress(percentComplete);
+          }
+        };
 
-      const uploadText = await uploadRes.text();
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(xhr.responseText);
+          } else {
+            reject({ status: xhr.status, responseText: xhr.responseText });
+          }
+        };
 
-      if (!uploadRes.ok) {
-        if (uploadText.includes('Cookie check') || uploadText.includes('Authenticate in new window')) {
+        xhr.onerror = () => {
+          reject({ status: xhr.status, responseText: 'Network Error' });
+        };
+
+        xhr.send(formData);
+      }).catch((err) => {
+        const text = err.responseText || '';
+        if (text.includes('Cookie check') || text.includes('Authenticate in new window')) {
           throw new Error("Problème de sécurité du navigateur (Cookies tiers bloqués). Veuillez ouvrir l'application dans un nouvel onglet.");
         }
-        throw new Error(`Le téléchargement a échoué (${uploadRes.status}): ${uploadText.slice(0, 100)}`);
-      }
+        throw new Error(`Le téléchargement a échoué (${err.status}): ${text.slice(0, 100)}`);
+      });
       
       let uploadData;
       try {
@@ -1587,6 +1607,19 @@ export default function App() {
                       <h3 className="text-xl font-bold">
                         {status === 'uploading' ? 'Téléchargement...' : 'Analyse & Incrustation...'}
                       </h3>
+                      {status === 'uploading' && (
+                        <div className="mt-4 max-w-xs mx-auto">
+                          <div className="h-2 bg-black/5 rounded-full overflow-hidden">
+                            <motion.div 
+                              className="h-full bg-[#FF4D00]"
+                              initial={{ width: 0 }}
+                              animate={{ width: `${uploadProgress}%` }}
+                              transition={{ ease: "linear", duration: 0.2 }}
+                            />
+                          </div>
+                          <p className="text-xs font-bold text-black/40 mt-2">{uploadProgress}%</p>
+                        </div>
+                      )}
                       <p className="text-xs text-black/40 mt-2">
                         {status === 'processing' ? 'Notre IA travaille sur votre vidéo. Cela peut prendre une minute.' : 'Veuillez patienter.'}
                       </p>
