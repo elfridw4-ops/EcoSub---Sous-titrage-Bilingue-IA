@@ -75,12 +75,12 @@ export const handleAppError = (error: any): AppError => {
   // Distinguish between pure network errors and cookie-related failures in iframes
   const isIframe = window.self !== window.top;
   
-  if (errorMsg.includes('Cookie check') || errorMsg.includes('Authenticate in new window') || errorMsg.includes('cookies de sécurité')) {
+  if (errorMsg.includes('Cookie check') || errorMsg.includes('Authenticate in new window') || errorMsg.includes('cookies de sécurité') || errorMsg.includes('Cookies tiers bloqués')) {
     return {
       type: ErrorType.COOKIE,
       message: "Problème de sécurité du navigateur (Cookies tiers bloqués).",
       details: "Votre navigateur bloque les cookies nécessaires à l'envoi de la vidéo dans cet aperçu intégré. C'est une restriction de sécurité normale.",
-      action: "Veuillez cliquer sur le bouton 'Ouvrir dans un nouvel onglet' en haut de la page pour utiliser l'application sans restriction."
+      action: "Veuillez cliquer sur le bouton 'Ouvrir l'application dans un nouvel onglet' pour utiliser l'application sans restriction."
     };
   }
 

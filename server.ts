@@ -33,6 +33,10 @@ async function startServer() {
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   // API Routes
+  app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok' });
+  });
+
   app.post('/api/upload', upload.single('video'), (req: any, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     res.json({ filename: req.file.filename });
@@ -179,8 +183,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   app.use('/outputs', express.static(OUTPUTS_DIR));
 
   // 404 handler for API
-  app.use('/api/*', (req, res) => {
-    res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.originalUrl}` });
   });
 
   // Global Error Handler for API

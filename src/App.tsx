@@ -174,7 +174,6 @@ const PRESET_STYLES: Record<string, { name: string; style: SubtitleStyle }> = {
 };
 
 export default function App() {
-  const SYSTEM_API_KEY = process.env.GEMINI_API_KEY || '';
   const [file, setFile] = useState<File | null>(null);
   const [refFile, setRefFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
@@ -186,8 +185,7 @@ export default function App() {
   const [customStyle, setCustomStyle] = useState<SubtitleStyle>(PRESET_STYLES.default.style);
   const [showStyleEditor, setShowStyleEditor] = useState(false);
   const [apiKey, setApiKey] = useState<string>(() => {
-    const savedKey = localStorage.getItem('gemini_api_key');
-    return savedKey || SYSTEM_API_KEY;
+    return localStorage.getItem('gemini_api_key') || '';
   });
   const [saveApiKey, setSaveApiKey] = useState<boolean>(() => localStorage.getItem('save_gemini_key') !== 'false');
   const [resultUrl, setResultUrl] = useState<string | null>(null);
@@ -276,30 +274,24 @@ export default function App() {
 
   // API Key Validation
   useEffect(() => {
-    // If using system key, assume it's valid (it's from the environment)
-    if (apiKey === SYSTEM_API_KEY && SYSTEM_API_KEY !== '') {
-      setIsKeyValid(true);
-      setKeyValidationError(null);
-      return;
-    }
-
-    if (!apiKey || user) {
+    if (!apiKey) {
       setIsKeyValid(null);
       setKeyValidationError(null);
       return;
     }
 
     const validateKey = async () => {
+      if (apiKey.length < 30) {
+        setIsKeyValid(false);
+        setKeyValidationError("La clé API semble trop courte.");
+        return;
+      }
+
       setIsKeyValidating(true);
       setKeyValidationError(null);
       setIsKeyValid(null);
 
       try {
-        // Basic format check
-        if (apiKey.length < 30) {
-          throw new Error("Clé trop courte");
-        }
-
         const ai = new GoogleGenAI({ apiKey });
         
         // Try a very small generation to be sure
@@ -373,28 +365,6 @@ export default function App() {
   
   // BYOK Architecture: Every user must provide their own key.
   const activeApiKey = apiKey;
-
-  const getRecentGenerations = () => {
-    if (!usage) return [];
-    const now = Date.now();
-    return usage.generations.filter(ts => (now - new Date(ts).getTime()) < WINDOW_MS);
-  };
-
-  const recentGenerations = getRecentGenerations();
-  const remainingCredits = isAdmin ? Infinity : Math.max(0, DAILY_LIMIT - recentGenerations.length);
-  const isLimitReached = !isAdmin && remainingCredits <= 0;
-
-  const getWaitTime = () => {
-    if (recentGenerations.length === 0) return null;
-    const oldestTs = new Date(recentGenerations[0]).getTime();
-    const nextAvailable = oldestTs + WINDOW_MS;
-    const diff = nextAvailable - Date.now();
-    if (diff <= 0) return "Maintenant";
-    
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-    return `${hours}h ${minutes}m`;
-  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -492,7 +462,7 @@ export default function App() {
       }
 
       // Fallback to fetching from server
-      const response = await fetch(resultUrl);
+      const response = await fetch(resultUrl, { credentials: 'include' });
       if (!response.ok) throw new Error('Download failed');
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -528,9 +498,7 @@ export default function App() {
   const processVideo = async () => {
     if (!file) return;
     
-    const currentApiKey = apiKey || SYSTEM_API_KEY;
-    
-    if (!currentApiKey) {
+    if (!apiKey) {
       setAppError({
         type: ErrorType.API_KEY,
         message: "Veuillez configurer votre clé API Gemini dans les paramètres pour continuer.",
@@ -562,6 +530,7 @@ export default function App() {
       const uploadText = await new Promise<string>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', '/api/upload-multi');
+        xhr.withCredentials = true;
         
         xhr.upload.onprogress = (event) => {
           if (event.lengthComputable) {
@@ -605,7 +574,7 @@ export default function App() {
 
       // 2. Transcription & Translation via Gemini
       setStatus('processing');
-      const ai = new GoogleGenAI({ apiKey: currentApiKey });
+      const ai = new GoogleGenAI({ apiKey: apiKey });
       const base64Data = await fileToBase64(file);
       
       let refBase64 = null;
@@ -710,6 +679,7 @@ export default function App() {
       const burnRes = await fetch('/api/burn-subtitles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ filename, segments, style: finalStyle }),
       });
 
@@ -745,16 +715,9 @@ export default function App() {
           mode: subtitleMode
         };
         
-        if (isAdmin) {
-          await updateDoc(userRef, {
-            history: arrayUnion(historyItem)
-          }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`));
-        } else {
-          await updateDoc(userRef, {
-            generations: arrayUnion(new Date().toISOString()),
-            history: arrayUnion(historyItem)
-          }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`));
-        }
+        await updateDoc(userRef, {
+          history: arrayUnion(historyItem)
+        }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`));
       } else if (apiKey) {
         // Anonymous user with API key
         const statsRef = doc(db, 'stats', 'global');
@@ -770,7 +733,7 @@ export default function App() {
       
       // 5. Fetch and store locally
       try {
-        const response = await fetch(downloadUrl);
+        const response = await fetch(downloadUrl, { credentials: 'include' });
         if (response.ok) {
           const blob = await response.blob();
           const localUrl = URL.createObjectURL(blob);
@@ -835,7 +798,7 @@ export default function App() {
     },
     {
       title: "4. Téléchargez & Partagez",
-      description: "Une fois terminé, prévisualisez votre vidéo et téléchargez-la. Vos crédits gratuits se rechargent toutes les 24 heures !",
+      description: "Une fois terminé, prévisualisez votre vidéo et téléchargez-la !",
       icon: <Download className="w-12 h-12 text-[#FF4D00]" />,
       image: "https://picsum.photos/seed/share/400/250"
     }
@@ -1176,6 +1139,14 @@ export default function App() {
                           Ouvrir dans un nouvel onglet <ExternalLink className="w-3 h-3" />
                         </button>
                       )}
+                      {(appError.type === ErrorType.COOKIE || appError.message.includes("Cookies tiers bloqués")) && (
+                        <button 
+                          onClick={() => window.open(window.location.href, '_blank')}
+                          className="mt-3 w-full py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold transition-colors flex items-center justify-center gap-2"
+                        >
+                          Ouvrir l'application dans un nouvel onglet <ExternalLink className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                     <button onClick={() => setAppError(null)} className="text-red-300 hover:text-red-500">
                       <X className="w-4 h-4" />
@@ -1193,77 +1164,63 @@ export default function App() {
                     className="text-center space-y-6"
                   >
                     {/* API Key Input - BYOK Architecture */}
-                    {!SYSTEM_API_KEY && (
-                      <div className="space-y-4">
-                        <div className="flex flex-col gap-2 text-left bg-black/5 p-5 rounded-2xl border border-black/5">
-                          <div className="flex justify-between items-center mb-2">
-                            <div className="flex items-center gap-2">
-                              <Key className="w-4 h-4 text-[#FF4D00]" />
-                              <label className="text-xs font-bold uppercase tracking-widest text-black/60">Configuration Clé API (BYOK)</label>
-                            </div>
-                            <a 
-                              href="https://aistudio.google.com/app/apikey" 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-[10px] text-[#FF4D00] hover:underline font-bold flex items-center gap-1"
-                            >
-                              Obtenir une clé <ExternalLink className="w-3 h-3" />
-                            </a>
+                    <div className="space-y-4">
+                      <div className="flex flex-col gap-2 text-left bg-black/5 p-5 rounded-2xl border border-black/5">
+                        <div className="flex justify-between items-center mb-2">
+                          <div className="flex items-center gap-2">
+                            <Key className="w-4 h-4 text-[#FF4D00]" />
+                            <label className="text-xs font-bold uppercase tracking-widest text-black/60">Configuration Clé API (BYOK)</label>
                           </div>
-                          <p className="text-[11px] text-black/50 mb-2">
-                            Cette application utilise votre propre clé API Gemini. Elle est stockée localement et de manière sécurisée dans votre navigateur.
-                          </p>
-                          <div className="relative">
-                            <input 
-                              type="password"
-                              value={apiKey}
-                              onChange={(e) => setApiKey(e.target.value)}
-                              placeholder="Collez votre clé API Gemini ici..."
-                              className={`w-full px-4 py-3 bg-white border rounded-xl text-xs focus:outline-none transition-all ${
-                                isKeyValid === true ? 'border-emerald-500/50 focus:border-emerald-500' : 
-                                isKeyValid === false ? 'border-red-500/50 focus:border-red-500' : 
-                                'border-black/10 focus:border-[#FF4D00]/50'
-                              }`}
-                            />
-                            <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                              {isKeyValidating && <Loader2 className="w-4 h-4 text-[#FF4D00] animate-spin" />}
-                              {!isKeyValidating && isKeyValid === true && <CheckCircle className="w-4 h-4 text-emerald-500" />}
-                              {!isKeyValidating && isKeyValid === false && <div className="w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[8px] text-white font-bold">!</div>}
-                            </div>
+                          <a 
+                            href="https://aistudio.google.com/app/apikey" 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-[#FF4D00] hover:underline font-bold flex items-center gap-1"
+                          >
+                            Obtenir une clé <ExternalLink className="w-3 h-3" />
+                          </a>
+                        </div>
+                        <p className="text-[11px] text-black/50 mb-2">
+                          Cette application utilise votre propre clé API Gemini. Elle est stockée localement et de manière sécurisée dans votre navigateur.
+                        </p>
+                        <div className="relative">
+                          <input 
+                            type="password"
+                            value={apiKey}
+                            onChange={(e) => setApiKey(e.target.value)}
+                            placeholder="Collez votre clé API Gemini ici..."
+                            className={`w-full px-4 py-3 bg-white border rounded-xl text-xs focus:outline-none transition-all ${
+                              isKeyValid === true ? 'border-emerald-500/50 focus:border-emerald-500' : 
+                              isKeyValid === false ? 'border-red-500/50 focus:border-red-500' : 
+                              'border-black/10 focus:border-[#FF4D00]/50'
+                            }`}
+                          />
+                          <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                            {isKeyValidating && <Loader2 className="w-4 h-4 text-[#FF4D00] animate-spin" />}
+                            {!isKeyValidating && isKeyValid === true && <CheckCircle className="w-4 h-4 text-emerald-500" />}
+                            {!isKeyValidating && isKeyValid === false && <div className="w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[8px] text-white font-bold">!</div>}
                           </div>
-                          {keyValidationError && (
-                            <p className="text-[10px] text-red-500 font-bold mt-1 ml-1">{keyValidationError}</p>
-                          )}
-                          {isKeyValid === true && (
-                            <p className="text-[10px] text-emerald-600 font-bold mt-1 ml-1">✓ Clé API valide et prête à l'emploi</p>
-                          )}
-                          
-                          <div className="flex items-center gap-2 mt-3 ml-1">
-                            <button 
-                              onClick={() => setSaveApiKey(!saveApiKey)}
-                              className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${saveApiKey ? 'bg-[#FF4D00] border-[#FF4D00]' : 'border-black/20 bg-white'}`}
-                            >
-                              {saveApiKey && <CheckCircle className="w-3 h-3 text-white" />}
-                            </button>
-                            <span className="text-xs text-black/70 font-medium cursor-pointer" onClick={() => setSaveApiKey(!saveApiKey)}>
-                              Sauvegarder la clé (localStorage)
-                            </span>
-                          </div>
+                        </div>
+                        {keyValidationError && (
+                          <p className="text-[10px] text-red-500 font-bold mt-1 ml-1">{keyValidationError}</p>
+                        )}
+                        {isKeyValid === true && (
+                          <p className="text-[10px] text-emerald-600 font-bold mt-1 ml-1">✓ Clé API valide et prête à l'emploi</p>
+                        )}
+                        
+                        <div className="flex items-center gap-2 mt-3 ml-1">
+                          <button 
+                            onClick={() => setSaveApiKey(!saveApiKey)}
+                            className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${saveApiKey ? 'bg-[#FF4D00] border-[#FF4D00]' : 'border-black/20 bg-white'}`}
+                          >
+                            {saveApiKey && <CheckCircle className="w-3 h-3 text-white" />}
+                          </button>
+                          <span className="text-xs text-black/70 font-medium cursor-pointer" onClick={() => setSaveApiKey(!saveApiKey)}>
+                            Sauvegarder la clé (localStorage)
+                          </span>
                         </div>
                       </div>
-                    )}
-
-                    {SYSTEM_API_KEY && !isAdmin && (
-                      <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-5 flex items-center gap-4 text-left">
-                        <div className="w-10 h-10 bg-emerald-500 rounded-full flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/20">
-                          <CheckCircle className="text-white w-6 h-6" />
-                        </div>
-                        <div>
-                          <p className="text-xs font-bold text-emerald-900 uppercase tracking-widest">Service Prêt</p>
-                          <p className="text-[11px] text-emerald-700/80 mt-0.5">L'application utilise la clé API du système. Aucune configuration requise.</p>
-                        </div>
-                      </div>
-                    )}
+                    </div>
 
                     {isAdmin && (
                       <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 flex items-center gap-3 text-left">

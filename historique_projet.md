@@ -33,6 +33,10 @@
 - **Suppression des Emojis** : Décision de simplifier le rendu visuel pour un aspect plus professionnel et raffiné.
 
 ## Historique des modifications
+- **2026-04-05** :
+    - Transition vers une architecture BYOK (Bring Your Own Key).
+    - Suppression de la clé API système et des quotas d'utilisation.
+    - Ajout d'un champ de saisie pour la clé API Gemini de l'utilisateur.
 - **2026-03-19** :
     - Implémentation du stockage local via IndexedDB.
     - Amélioration de la gestion des erreurs de téléchargement.

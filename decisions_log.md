@@ -1,5 +1,12 @@
 # Decisions Log - EcoSub AI
 
+## Architecture BYOK (Bring Your Own Key)
+- **Date** : 2026-04-05
+- **Contexte** : Rendre l'application totalement indépendante d'AI Studio et utilisable partout.
+- **Décision** : Supprimer la clé API système et les quotas. L'utilisateur doit fournir sa propre clé Gemini API qui est stockée dans le `localStorage`.
+- **Alternatives envisagées** : Conserver un quota gratuit avec une clé backend (rejeté pour garantir l'indépendance totale).
+- **Conséquences** : L'application peut être hébergée n'importe où sans coût d'API pour le propriétaire, mais nécessite une action de l'utilisateur pour fonctionner.
+
 ## Utilisation d'IndexedDB pour le stockage vidéo
 - **Date** : 2026-03-19
 - **Contexte** : L'utilisateur ne veut pas de stockage serveur pour les vidéos générées pour des raisons de coût et de confidentialité.

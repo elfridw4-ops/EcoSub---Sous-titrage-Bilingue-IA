@@ -1,6 +1,7 @@
 # Tasks Tracking - EcoSub AI
 
 ## Fonctionnalités implémentées
+- [x] Architecture BYOK (Bring Your Own Key) pour l'indépendance totale.
 - [x] Transcription et Traduction automatique (Gemini).
 - [x] Incrustation de sous-titres via FFmpeg.
 - [x] Système de styles personnalisables et presets.

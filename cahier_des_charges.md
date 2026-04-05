@@ -14,7 +14,7 @@
 
 ## Exigences non fonctionnelles
 - **Performances** : Traitement vidéo rapide via FFmpeg côté serveur.
-- **Sécurité** : Protection des clés API (backend), authentification Firebase.
+- **Sécurité** : Protection des clés API (BYOK - stockées localement), authentification Firebase.
 - **Évolutivité** : Architecture modulaire permettant d'ajouter de nouvelles langues ou styles.
 - **Expérience Utilisateur** : Interface responsive, animations fluides (Motion), retours d'état clairs.
 
