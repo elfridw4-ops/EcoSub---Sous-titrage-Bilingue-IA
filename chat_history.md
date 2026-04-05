@@ -46,6 +46,15 @@ Oui, absolument ! Et c'est une question très pertinente. Rassurez-vous : rendre
 
 [2026-04-05]
 Utilisateur :
+MASQUER LE MODAL DE Configuration Clé API (BYOK)
+
+Assistant :
+J'ai masqué la section de configuration de la clé API. Elle est désormais accessible via un bouton "Clé" dans l'en-tête (header). Si aucune clé n'est configurée, le panneau s'affiche automatiquement au lancement.
+
+---
+
+[2026-04-05]
+Utilisateur :
 oui
 
 Assistant :
