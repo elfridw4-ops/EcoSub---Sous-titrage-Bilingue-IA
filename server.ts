@@ -12,6 +12,67 @@ const OUTPUTS_DIR = path.join(process.cwd(), 'outputs');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR);
 if (!fs.existsSync(OUTPUTS_DIR)) fs.mkdirSync(OUTPUTS_DIR);
 
+// --- 1. Garbage Collection (Storage Exhaustion Fix) ---
+const CLEANUP_INTERVAL = 15 * 60 * 1000; // Run every 15 minutes
+const MAX_FILE_AGE = 60 * 60 * 1000; // Delete files older than 1 hour
+
+function cleanupOldFiles() {
+  const now = Date.now();
+  [UPLOADS_DIR, OUTPUTS_DIR].forEach(dir => {
+    fs.readdir(dir, (err, files) => {
+      if (err) {
+        console.error(`Cleanup error reading ${dir}:`, err);
+        return;
+      }
+      files.forEach(file => {
+        const filePath = path.join(dir, file);
+        fs.stat(filePath, (err, stats) => {
+          if (err) return;
+          if (now - stats.mtimeMs > MAX_FILE_AGE) {
+            fs.unlink(filePath, err => {
+              if (err) console.error(`Failed to delete old file ${filePath}:`, err);
+              else console.log(`Garbage Collection: Deleted old file ${file}`);
+            });
+          }
+        });
+      });
+    });
+  });
+}
+setInterval(cleanupOldFiles, CLEANUP_INTERVAL);
+
+// --- 2. FFmpeg Concurrency Limiter (DoS Fix) ---
+class AsyncSemaphore {
+  private maxConcurrent: number;
+  private currentCount: number;
+  private queue: Array<() => void>;
+
+  constructor(maxConcurrent: number) {
+    this.maxConcurrent = maxConcurrent;
+    this.currentCount = 0;
+    this.queue = [];
+  }
+
+  async acquire(): Promise<void> {
+    if (this.currentCount < this.maxConcurrent) {
+      this.currentCount++;
+      return Promise.resolve();
+    }
+    return new Promise(resolve => this.queue.push(resolve));
+  }
+
+  release(): void {
+    this.currentCount--;
+    if (this.queue.length > 0) {
+      this.currentCount++;
+      const nextResolve = this.queue.shift();
+      if (nextResolve) nextResolve();
+    }
+  }
+}
+// Limit to 2 concurrent FFmpeg processes to prevent CPU/RAM exhaustion
+const ffmpegSemaphore = new AsyncSemaphore(2);
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOADS_DIR),
   filename: (req, file, cb) => {
@@ -54,10 +115,17 @@ async function startServer() {
     const { filename, segments, style } = req.body;
     if (!filename || !segments) return res.status(400).json({ error: 'Filename and segments required' });
 
-    const inputPath = path.join(UPLOADS_DIR, filename);
-    const assPath = path.join(UPLOADS_DIR, `${filename}.ass`);
-    const outputFilename = `processed_${filename}`;
+    // --- 3. Path Traversal Fix ---
+    const safeFilename = path.basename(filename);
+    const inputPath = path.join(UPLOADS_DIR, safeFilename);
+    const assPath = path.join(UPLOADS_DIR, `${safeFilename}.ass`);
+    const outputFilename = `processed_${safeFilename}`;
     const outputPath = path.join(OUTPUTS_DIR, outputFilename);
+
+    // Verify input file exists before proceeding
+    if (!fs.existsSync(inputPath)) {
+      return res.status(404).json({ error: 'Video file not found' });
+    }
 
     try {
       // Helper to convert hex to ASS color (&HBBGGRR)
@@ -150,15 +218,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       // 2. Burn subtitles into video
       const escapedAssPath = assPath.replace(/\\/g, '/').replace(/:/g, '\\:');
       
-      await new Promise((resolve, reject) => {
-        exec(`ffmpeg -i "${inputPath}" -vf "subtitles='${escapedAssPath}'" -c:a copy -y "${outputPath}"`, (err, stdout, stderr) => {
-          if (err) {
-            console.error('FFmpeg Error:', stderr);
-            reject(err);
-          }
-          else resolve(true);
+      await ffmpegSemaphore.acquire();
+      try {
+        await new Promise((resolve, reject) => {
+          exec(`ffmpeg -i "${inputPath}" -vf "subtitles='${escapedAssPath}'" -c:a copy -y "${outputPath}"`, (err, stdout, stderr) => {
+            if (err) {
+              console.error('FFmpeg Error:', stderr);
+              reject(err);
+            }
+            else resolve(true);
+          });
         });
-      });
+      } finally {
+        ffmpegSemaphore.release();
+      }
 
       res.json({ downloadUrl: `/api/download/${outputFilename}` });
     } catch (error) {
@@ -168,12 +241,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   });
 
   app.get('/api/download/:filename', (req, res) => {
-    const filename = req.params.filename;
-    const filePath = path.join(OUTPUTS_DIR, filename);
+    // --- 3. Path Traversal Fix ---
+    const safeFilename = path.basename(req.params.filename);
+    const filePath = path.join(OUTPUTS_DIR, safeFilename);
     
     if (fs.existsSync(filePath)) {
       res.setHeader('Content-Type', 'video/mp4');
-      res.download(filePath, filename);
+      res.download(filePath, safeFilename);
     } else {
       res.status(404).send('File not found');
     }

@@ -1,0 +1,13 @@
+{
+  "version": "v1.1.0",
+  "date": "2026-06-17",
+  "isCritical": false,
+  "changes": [
+    "Conversion complète en Progressive Web App (PWA) de niveau professionnel.",
+    "Optimisation SEO avancée (Balises Open Graph, cartes Twitter/X et indexation optimisée).",
+    "Système de mise à jour fluide, non intrusive et respectueux de la persistance de session.",
+    "Bouton intelligent d'installation (Android, iOS, Windows, macOS) basé sur le signal d'installation natif.",
+    "Fichier manifeste PWA raffiné avec des icônes multi-résolutions de haute fidélité.",
+    "Ajout d'une page dédiée pour consulter l'historique détaillé des Notes de version."
+  ]
+}

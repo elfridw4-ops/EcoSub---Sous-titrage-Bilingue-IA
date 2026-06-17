@@ -5,6 +5,19 @@ import { GoogleGenAI } from '@google/genai';
 import { auth, signInWithGoogle, logout, db } from './firebase';
 import { handleAppError, AppError, ErrorType } from './utils/errors';
 import { saveVideo, getVideos, deleteVideo, StoredVideo } from './utils/storage';
+import { VersionManager } from './components/VersionManager';
+import { PwaInstallButton } from './components/PwaInstallButton';
+import { ChangelogModal } from './components/ChangelogModal';
+import { CURRENT_VERSION } from './data/versions';
+import { FeedbackButton } from './components/FeedbackButton';
+import { MyDataModal } from './components/MyDataModal';
+import { ApiKeyConfig } from './components/ApiKeyConfig';
+import { StyleEditor } from './components/StyleEditor';
+import LandingPage from './components/LandingPage';
+import { AdminPanel } from './components/AdminPanel';
+import { SubtitleStyle, PRESET_STYLES } from './utils/styles';
+import { LegalModal } from './components/legal/LegalModal';
+import { LegalDocumentId } from './components/legal/legalContent';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, arrayUnion, onSnapshot, collection, getDocs, increment } from 'firebase/firestore';
 
@@ -94,85 +107,6 @@ const ADMIN_EMAIL = 'elfridw4@gmail.com';
 const DAILY_LIMIT = 3;
 const WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-interface SubtitleStyle {
-  primaryColor: string;
-  outlineColor: string;
-  fontSize: number;
-  alignment: number;
-  fontName: string;
-  animation: 'none' | 'fade';
-  backgroundStyle: 'none' | 'semi-transparent-box';
-  shadow: number;
-}
-
-const PRESET_STYLES: Record<string, { name: string; style: SubtitleStyle }> = {
-  default: {
-    name: 'Défaut',
-    style: {
-      primaryColor: '#FFFFFF',
-      outlineColor: '#000000',
-      fontSize: 32,
-      alignment: 2,
-      fontName: 'Arial',
-      animation: 'none',
-      backgroundStyle: 'none',
-      shadow: 2
-    }
-  },
-  youtube: {
-    name: 'YouTube Classic',
-    style: {
-      primaryColor: '#FFFFFF',
-      outlineColor: '#000000',
-      fontSize: 28,
-      alignment: 2,
-      fontName: 'Roboto',
-      animation: 'none',
-      backgroundStyle: 'semi-transparent-box',
-      shadow: 0
-    }
-  },
-  netflix: {
-    name: 'Netflix Style',
-    style: {
-      primaryColor: '#FFFFFF',
-      outlineColor: '#000000',
-      fontSize: 34,
-      alignment: 2,
-      fontName: 'Consolas',
-      animation: 'none',
-      backgroundStyle: 'none',
-      shadow: 2
-    }
-  },
-  modern: {
-    name: 'Modern Green',
-    style: {
-      primaryColor: '#00FF00',
-      outlineColor: '#000000',
-      fontSize: 36,
-      alignment: 2,
-      fontName: 'Arial Black',
-      animation: 'fade',
-      backgroundStyle: 'none',
-      shadow: 3
-    }
-  },
-  minimal: {
-    name: 'Minimalist',
-    style: {
-      primaryColor: '#F3F4F6',
-      outlineColor: '#1F2937',
-      fontSize: 24,
-      alignment: 2,
-      fontName: 'Inter',
-      animation: 'none',
-      backgroundStyle: 'none',
-      shadow: 1
-    }
-  }
-};
-
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [refFile, setRefFile] = useState<File | null>(null);
@@ -196,18 +130,49 @@ export default function App() {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [globalStats, setGlobalStats] = useState<any>(null);
   const [showAdminDash, setShowAdminDash] = useState(false);
-  const [isKeyValidating, setIsKeyValidating] = useState(false);
-  const [keyValidationError, setKeyValidationError] = useState<string | null>(null);
   const [isKeyValid, setIsKeyValid] = useState<boolean | null>(null);
-  const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem('onboarding_completed'));
+  const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem('has_seen_landing'));
   const [showApiKeyConfig, setShowApiKeyConfig] = useState(() => !localStorage.getItem('gemini_api_key'));
-  const [onboardingStep, setOnboardingStep] = useState(0);
   const [localBlobUrl, setLocalBlobUrl] = useState<string | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [storedVideos, setStoredVideos] = useState<StoredVideo[]>([]);
+  const [isDraggingTarget, setIsDraggingTarget] = useState(false);
+  const [isDraggingRef, setIsDraggingRef] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const refFileInputRef = useRef<HTMLInputElement>(null);
   
+  // État d'affichage de l'historique complet des notes de version (Changelog)
+  const [showVersionsHistory, setShowVersionsHistory] = useState(false);
+  const [showMyData, setShowMyData] = useState(false);
+  const [activeLegalDoc, setActiveLegalDoc] = useState<LegalDocumentId | null>(null);
+  
+  // Répérage de la présence au sein d'une Iframe
   const isIframe = window.self !== window.top;
+
+  // Initialisation de l'état bloquant pour les cookies tiers requis par les requêtes Iframe
+  const [iframeCookieBlocked, setIframeCookieBlocked] = useState(false);
+
+  // Vérification silencieuse et proactive de la répertorisation des cookies tiers lors du montage
+  useEffect(() => {
+    // Exécuter l'évaluation uniquement si nous sommes intégrés dans un iframe
+    if (isIframe) {
+      // Appel réseau silencieux vers notre API de santé système
+      fetch('/api/health')
+        .then(async (res) => {
+          // Extraction du texte de la réponse brute
+          const text = await res.text();
+          // Si le texte de réponse contient les indicateurs typiques du challenge de redirection proxy
+          if (text.includes('Cookie check') || text.includes('Authenticate in new window') || !res.ok) {
+            // Activer l'affichage du panneau explicatif bloquant
+            setIframeCookieBlocked(true);
+          }
+        })
+        .catch(() => {
+          // Lever l'indicateur de cookies bloqués si la requête est purement rejetée par le navigateur
+          setIframeCookieBlocked(true);
+        });
+    }
+  }, [isIframe]);
 
   // Auth listener
   useEffect(() => {
@@ -272,51 +237,6 @@ export default function App() {
   };
 
   const isAdmin = user?.email === ADMIN_EMAIL;
-
-  // API Key Validation
-  useEffect(() => {
-    if (!apiKey) {
-      setIsKeyValid(null);
-      setKeyValidationError(null);
-      return;
-    }
-
-    const validateKey = async () => {
-      if (apiKey.length < 30) {
-        setIsKeyValid(false);
-        setKeyValidationError("La clé API semble trop courte.");
-        return;
-      }
-
-      setIsKeyValidating(true);
-      setKeyValidationError(null);
-      setIsKeyValid(null);
-
-      try {
-        const ai = new GoogleGenAI({ apiKey });
-        
-        // Try a very small generation to be sure
-        const response = await ai.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: "test",
-          config: { maxOutputTokens: 1 }
-        });
-
-        if (response.text) {
-          setIsKeyValid(true);
-        }
-      } catch (err: any) {
-        console.error("Key validation error:", err);
-        setIsKeyValid(false);
-        setKeyValidationError(err.message || "Clé API invalide");
-      } finally {
-        setIsKeyValidating(false);
-      }
-    };
-
-    const timeoutId = setTimeout(validateKey, 1000);
-    return () => clearTimeout(timeoutId);
-  }, [apiKey, user]);
 
   // Handle Save Choice
   useEffect(() => {
@@ -400,6 +320,62 @@ export default function App() {
     e.stopPropagation();
     setRefFile(null);
     setRefPreview(null);
+    if (refFileInputRef.current) {
+      refFileInputRef.current.value = '';
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>, type: 'target' | 'ref') => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (type === 'target') {
+      setIsDraggingTarget(true);
+    } else {
+      setIsDraggingRef(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>, type: 'target' | 'ref') => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (type === 'target') {
+      setIsDraggingTarget(false);
+    } else {
+      setIsDraggingRef(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>, type: 'target' | 'ref') => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (type === 'target') {
+      setIsDraggingTarget(false);
+    } else {
+      setIsDraggingRef(false);
+    }
+
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const selectedFile = e.dataTransfer.files[0];
+      if (selectedFile.type.startsWith('video/')) {
+        if (type === 'target') {
+          setFile(selectedFile);
+          setFilePreview(URL.createObjectURL(selectedFile));
+          setStatus('idle');
+          setResultUrl(null);
+          setAppError(null);
+        } else {
+          setRefFile(selectedFile);
+          setRefPreview(URL.createObjectURL(selectedFile));
+        }
+      } else {
+        setAppError({
+          type: ErrorType.UNKNOWN,
+          message: `Veuillez déposer un fichier vidéo valide pour la ${type === 'target' ? 'vidéo cible' : 'vidéo de référence'}.`,
+          details: "Le fichier choisi n'est pas au format vidéo supporté (video/*)."
+        });
+      }
+    }
   };
 
   const handleDeleteStoredVideo = async (id: string) => {
@@ -427,7 +403,20 @@ export default function App() {
   useEffect(() => {
     const loadVideos = async () => {
       try {
-        const videos = await getVideos();
+        let videos = await getVideos();
+        // Nettoyage automatique local de 21 jours si activé
+        const isAutoCleanupEnabled = localStorage.getItem('auto_cleanup_21_days') === 'true';
+        if (isAutoCleanupEnabled) {
+          const limitTime = new Date().getTime() - 21 * 24 * 60 * 60 * 1000;
+          const toDelete = videos.filter(v => new Date(v.date).getTime() < limitTime);
+          if (toDelete.length > 0) {
+            for (const v of toDelete) {
+              await deleteVideo(v.id);
+            }
+            videos = await getVideos();
+            console.log(`Auto-cleanup local: ${toDelete.length} projet(s) de plus de 21 jours supprimé(s).`);
+          }
+        }
         setStoredVideos(videos);
       } catch (err) {
         console.error('Failed to load stored videos:', err);
@@ -463,7 +452,7 @@ export default function App() {
       }
 
       // Fallback to fetching from server
-      const response = await fetch(resultUrl, { credentials: 'include' });
+      const response = await fetch(resultUrl);
       if (!response.ok) throw new Error('Download failed');
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -486,13 +475,23 @@ export default function App() {
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => {
-        const base64 = (reader.result as string).split(',')[1];
-        resolve(base64);
+      const worker = new Worker(new URL('./workers/fileWorker.ts', import.meta.url), { type: 'module' });
+      const id = Math.random().toString(36).substring(7);
+      
+      worker.onmessage = (e) => {
+        if (e.data.id === id) {
+          if (e.data.error) reject(new Error(e.data.error));
+          else resolve(e.data.base64);
+          worker.terminate();
+        }
       };
-      reader.onerror = error => reject(error);
+      
+      worker.onerror = (error) => {
+        reject(error);
+        worker.terminate();
+      };
+      
+      worker.postMessage({ file, id });
     });
   };
 
@@ -531,7 +530,6 @@ export default function App() {
       const uploadText = await new Promise<string>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', '/api/upload-multi');
-        xhr.withCredentials = true;
         
         xhr.upload.onprogress = (event) => {
           if (event.lengthComputable) {
@@ -635,7 +633,7 @@ export default function App() {
       let geminiResponse;
       try {
         geminiResponse = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
+          model: 'gemini-3.5-flash',
           contents: { parts: contents },
           config: {
             responseMimeType: 'application/json'
@@ -680,7 +678,6 @@ export default function App() {
       const burnRes = await fetch('/api/burn-subtitles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ filename, segments, style: finalStyle }),
       });
 
@@ -734,7 +731,7 @@ export default function App() {
       
       // 5. Fetch and store locally
       try {
-        const response = await fetch(downloadUrl, { credentials: 'include' });
+        const response = await fetch(downloadUrl);
         if (response.ok) {
           const blob = await response.blob();
           const localUrl = URL.createObjectURL(blob);
@@ -767,146 +764,106 @@ export default function App() {
     }
   };
 
-  const finishOnboarding = () => {
-    setShowOnboarding(false);
-    localStorage.setItem('onboarding_completed', 'true');
+  const [logoPressTimer, setLogoPressTimer] = useState<NodeJS.Timeout | null>(null);
+  const [logoPressProgress, setLogoPressProgress] = useState(0);
+  const [progressInterval, setProgressInterval] = useState<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        setShowAdminDash(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const handleLogoPressStart = () => {
+    setLogoPressProgress(0);
+    const interval = setInterval(() => {
+      setLogoPressProgress(prev => Math.min(prev + 2, 100));
+    }, 100);
+    setProgressInterval(interval);
+    const timer = setTimeout(() => {
+      setShowAdminDash(prev => !prev);
+      handleLogoPressEnd();
+    }, 5000);
+    setLogoPressTimer(timer);
   };
 
-  const onboardingSteps = [
-    {
-      title: "Bienvenue sur EcoSub AI",
-      description: "Transformez vos vidéos en contenus bilingues élégants en quelques secondes grâce à la puissance de Gemini 1.5 Flash.",
-      icon: <Sparkles className="w-12 h-12 text-[#FF4D00]" />,
-      image: "https://picsum.photos/seed/welcome/400/250"
-    },
-    {
-      title: "1. Vidéo Cible",
-      description: "Déposez la vidéo que vous souhaitez sous-titrer. Nous détecterons automatiquement si elle est en Français ou en Anglais.",
-      icon: <Upload className="w-12 h-12 text-[#FF4D00]" />,
-      image: "https://picsum.photos/seed/upload/400/250"
-    },
-    {
-      title: "2. Style de Référence (Optionnel)",
-      description: "Vous aimez le style d'un autre créateur ? Déposez une vidéo de référence et nous copierons automatiquement la couleur, la police et la position de ses sous-titres.",
-      icon: <Video className="w-12 h-12 text-[#FF4D00]" />,
-      image: "https://picsum.photos/seed/style/400/250"
-    },
-    {
-      title: "3. Magie de l'IA",
-      description: "Notre IA transcrit, traduit et incruste les sous-titres directement dans la vidéo.",
-      icon: <Languages className="w-12 h-12 text-[#FF4D00]" />,
-      image: "https://picsum.photos/seed/ai/400/250"
-    },
-    {
-      title: "4. Téléchargez & Partagez",
-      description: "Une fois terminé, prévisualisez votre vidéo et téléchargez-la !",
-      icon: <Download className="w-12 h-12 text-[#FF4D00]" />,
-      image: "https://picsum.photos/seed/share/400/250"
+  const handleLogoPressEnd = () => {
+    if (logoPressTimer) {
+      clearTimeout(logoPressTimer);
+      setLogoPressTimer(null);
     }
-  ];
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      setProgressInterval(null);
+    }
+    setLogoPressProgress(0);
+  };
+
+  const finishOnboarding = () => {
+    setShowOnboarding(false);
+    localStorage.setItem('has_seen_landing', 'true');
+  };
+
+  if (showOnboarding) {
+    return (
+      <ErrorBoundary>
+        <LandingPage onStart={finishOnboarding} onOpenLegal={(id) => setActiveLegalDoc(id)} />
+        <LegalModal 
+          isOpen={activeLegalDoc !== null}
+          onClose={() => setActiveLegalDoc(null)}
+          documentId={activeLegalDoc || 'cgu'}
+        />
+      </ErrorBoundary>
+    );
+  }
+
+  if (isAdmin && showAdminDash) {
+    return (
+      <ErrorBoundary>
+        <AdminPanel 
+          onClose={() => setShowAdminDash(false)} 
+          allUsers={allUsers} 
+          globalStats={globalStats} 
+        />
+      </ErrorBoundary>
+    );
+  }
 
   return (
     <ErrorBoundary>
-      <AnimatePresence>
-        {showOnboarding && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              className="bg-white rounded-[32px] shadow-2xl max-w-lg w-full overflow-hidden relative"
-            >
-              <button 
-                onClick={finishOnboarding}
-                className="absolute top-6 right-6 p-2 hover:bg-black/5 rounded-full transition-colors z-10"
-              >
-                <X className="w-5 h-5 text-black/40" />
-              </button>
-
-              <div className="p-8 sm:p-10 space-y-8">
-                <div className="flex flex-col items-center text-center space-y-6">
-                  <motion.div 
-                    key={onboardingStep}
-                    initial={{ scale: 0.5, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    className="w-24 h-24 bg-[#FF4D00]/5 rounded-3xl flex items-center justify-center"
-                  >
-                    {onboardingSteps[onboardingStep].icon}
-                  </motion.div>
-
-                  <div className="space-y-2">
-                    <h3 className="text-2xl font-bold tracking-tight">
-                      {onboardingSteps[onboardingStep].title}
-                    </h3>
-                    <p className="text-black/60 leading-relaxed">
-                      {onboardingSteps[onboardingStep].description}
-                    </p>
-                  </div>
-
-                  <div className="w-full aspect-video rounded-2xl overflow-hidden bg-black/5 border border-black/5">
-                    <img 
-                      src={onboardingSteps[onboardingStep].image} 
-                      alt="Tutorial" 
-                      className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-4">
-                  <div className="flex gap-1.5">
-                    {onboardingSteps.map((_, i) => (
-                      <div 
-                        key={i}
-                        className={`h-1.5 rounded-full transition-all duration-300 ${i === onboardingStep ? 'w-8 bg-[#FF4D00]' : 'w-1.5 bg-black/10'}`}
-                      />
-                    ))}
-                  </div>
-
-                  <div className="flex gap-3">
-                    {onboardingStep > 0 && (
-                      <button 
-                        onClick={() => setOnboardingStep(prev => prev - 1)}
-                        className="p-3 bg-black/5 hover:bg-black/10 rounded-xl transition-colors"
-                      >
-                        <ChevronLeft className="w-5 h-5" />
-                      </button>
-                    )}
-                    
-                    {onboardingStep < onboardingSteps.length - 1 ? (
-                      <button 
-                        onClick={() => setOnboardingStep(prev => prev + 1)}
-                        className="px-6 py-3 bg-black text-white rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-black/80 transition-all active:scale-95"
-                      >
-                        Suivant
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-                    ) : (
-                      <button 
-                        onClick={finishOnboarding}
-                        className="px-8 py-3 bg-[#FF4D00] text-white rounded-xl font-bold text-sm hover:bg-[#E64500] transition-all active:scale-95 shadow-lg shadow-[#FF4D00]/20"
-                      >
-                        C'est parti !
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
+      <VersionManager />
+      <PwaInstallButton />
+      <FeedbackButton />
       <div className="min-h-screen bg-[#FDFCFB] text-[#141414] font-sans">
       {/* Header */}
       <header className="border-b border-black/5 p-4 sm:p-6 flex justify-between items-center sticky top-0 bg-[#FDFCFB]/80 backdrop-blur-md z-50">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 sm:w-10 sm:h-10 bg-[#FF4D00] rounded-full flex items-center justify-center">
-            <Languages className="text-white w-5 h-5 sm:w-6 sm:h-6" />
+        <div 
+          className="flex items-center gap-2 cursor-pointer select-none"
+          onClick={() => setShowOnboarding(true)}
+          onMouseDown={handleLogoPressStart}
+          onMouseUp={handleLogoPressEnd}
+          onMouseLeave={handleLogoPressEnd}
+          onTouchStart={handleLogoPressStart}
+          onTouchEnd={handleLogoPressEnd}
+        >
+          <div className="w-8 h-8 sm:w-10 sm:h-10 bg-white rounded-full flex items-center justify-center relative overflow-hidden shadow-sm border border-black/5">
+            <img 
+              src="/icons/apple-touch-icon.png" 
+              alt="EcoSub AI Logo" 
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+            <div 
+              className="absolute inset-0 transition-all duration-100 pointer-events-none"
+              style={{ 
+                background: `conic-gradient(rgba(255, 77, 0, 0.4) ${logoPressProgress}%, transparent ${logoPressProgress}%)` 
+              }}
+            />
           </div>
           <h1 className="text-lg sm:xl font-bold tracking-tight">EcoSub <span className="font-light italic">AI</span></h1>
         </div>
@@ -921,7 +878,6 @@ export default function App() {
           </button>
           <button 
             onClick={() => {
-              setOnboardingStep(0);
               setShowOnboarding(true);
             }}
             className="p-2 hover:bg-black/5 rounded-full transition-colors text-black/40 hover:text-[#FF4D00]"
@@ -929,16 +885,6 @@ export default function App() {
           >
             <HelpCircle className="w-5 h-5" />
           </button>
-          {isAdmin && (
-            <button 
-              onClick={() => setShowAdminDash(!showAdminDash)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all ${
-                showAdminDash ? 'bg-[#FF4D00] text-white' : 'bg-black/5 text-black/40 hover:bg-black/10'
-              }`}
-            >
-              Dashboard
-            </button>
-          )}
           {!isAuthLoading && (
             user ? (
               <div className="flex items-center gap-3">
@@ -1021,70 +967,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Admin Dashboard */}
-        <AnimatePresence>
-          {isAdmin && showAdminDash && (
-            <motion.div 
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="mb-12 overflow-hidden"
-            >
-              <div className="bg-black text-white rounded-3xl p-6 sm:p-8 space-y-8">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-xl font-bold">Tableau de Bord Administrateur</h3>
-                  <button onClick={() => setShowAdminDash(false)} className="text-white/40 hover:text-white">Fermer</button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                  <div className="bg-white/5 rounded-2xl p-5 border border-white/10">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-1">Utilisateurs Google</p>
-                    <p className="text-3xl font-bold">{allUsers.length}</p>
-                    <p className="text-[10px] text-white/20 mt-2">Comptes uniques enregistrés</p>
-                  </div>
-                  <div className="bg-white/5 rounded-2xl p-5 border border-white/10">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-1">Utilisateurs Clé API</p>
-                    <p className="text-3xl font-bold">{globalStats?.anonymousGenerations || 0}</p>
-                    <p className="text-[10px] text-white/20 mt-2">Générations anonymes totales</p>
-                  </div>
-                  <div className="bg-white/5 rounded-2xl p-5 border border-white/10">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-1">Total Générations</p>
-                    <p className="text-3xl font-bold">
-                      {(allUsers.reduce((acc, u) => acc + (u.history?.length || 0), 0)) + (globalStats?.anonymousGenerations || 0)}
-                    </p>
-                    <p className="text-[10px] text-white/20 mt-2">Toutes méthodes confondues</p>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <h4 className="text-xs font-bold uppercase tracking-widest text-white/40">Derniers Utilisateurs Google</h4>
-                  <div className="grid grid-cols-1 gap-2">
-                    {allUsers.slice(0, 5).map((u, i) => (
-                      <div key={i} className="flex justify-between items-center bg-white/5 p-3 rounded-xl border border-white/5">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 bg-white/10 rounded-full flex items-center justify-center text-[10px] font-bold">
-                            {u.email?.[0].toUpperCase()}
-                          </div>
-                          <div>
-                            <p className="text-xs font-medium">{u.email}</p>
-                            <p className="text-[9px] text-white/40">{u.history?.length || 0} générations</p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-[9px] text-white/40">Dernière activité</p>
-                          <p className="text-[10px] font-medium">
-                            {u.generations?.length > 0 ? new Date(u.generations[u.generations.length - 1]).toLocaleDateString() : 'Jamais'}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
           {/* Left Column: Info */}
           <div className="lg:col-span-5 space-y-6">
@@ -1118,6 +1000,30 @@ export default function App() {
               layout
               className="bg-white border border-black/10 rounded-3xl p-5 sm:p-8 shadow-2xl shadow-black/5 min-h-[400px] flex flex-col justify-center"
             >
+              {/* Alerte et action corrective immédiates si un blocage de cookies tiers est détecté de manière proactive */}
+              {iframeCookieBlocked && (
+                <div className="mb-6 p-5 bg-amber-50/80 border border-amber-200 rounded-2xl text-left space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-amber-100/80 rounded-full text-amber-600 shrink-0 mt-0.5 animate-pulse">
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-amber-950">Sécurité Iframe & Cookies tiers bloqués</h4>
+                      <p className="text-xs text-amber-800 leading-relaxed mt-1">
+                        Votre navigateur restreint de manière proactive la transmission de contenus multimédias au sein de l'iframe intégré par défaut d'AI Studio.
+                      </p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => window.open(window.location.href, '_blank')}
+                    className="w-full py-4 bg-[#FF4D00] hover:bg-[#E64500] text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#FF4D00]/25 active:scale-95"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Ouvrir l'application dans un nouvel onglet 🚀
+                  </button>
+                </div>
+              )}
+
               {appError && (
                 <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl">
                   <div className="flex items-start gap-3">
@@ -1173,63 +1079,13 @@ export default function App() {
                   >
                     {/* API Key Input - BYOK Architecture */}
                     {showApiKeyConfig && (
-                      <div className="space-y-4">
-                        <div className="flex flex-col gap-2 text-left bg-black/5 p-5 rounded-2xl border border-black/5">
-                          <div className="flex justify-between items-center mb-2">
-                            <div className="flex items-center gap-2">
-                              <Key className="w-4 h-4 text-[#FF4D00]" />
-                              <label className="text-xs font-bold uppercase tracking-widest text-black/60">Configuration Clé API (BYOK)</label>
-                            </div>
-                            <a 
-                              href="https://aistudio.google.com/app/apikey" 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-[10px] text-[#FF4D00] hover:underline font-bold flex items-center gap-1"
-                            >
-                              Obtenir une clé <ExternalLink className="w-3 h-3" />
-                            </a>
-                          </div>
-                          <p className="text-[11px] text-black/50 mb-2">
-                            Cette application utilise votre propre clé API Gemini. Elle est stockée localement et de manière sécurisée dans votre navigateur.
-                          </p>
-                          <div className="relative">
-                            <input 
-                              type="password"
-                              value={apiKey}
-                              onChange={(e) => setApiKey(e.target.value)}
-                              placeholder="Collez votre clé API Gemini ici..."
-                              className={`w-full px-4 py-3 bg-white border rounded-xl text-xs focus:outline-none transition-all ${
-                                isKeyValid === true ? 'border-emerald-500/50 focus:border-emerald-500' : 
-                                isKeyValid === false ? 'border-red-500/50 focus:border-red-500' : 
-                                'border-black/10 focus:border-[#FF4D00]/50'
-                              }`}
-                            />
-                            <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                              {isKeyValidating && <Loader2 className="w-4 h-4 text-[#FF4D00] animate-spin" />}
-                              {!isKeyValidating && isKeyValid === true && <CheckCircle className="w-4 h-4 text-emerald-500" />}
-                              {!isKeyValidating && isKeyValid === false && <div className="w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[8px] text-white font-bold">!</div>}
-                            </div>
-                          </div>
-                          {keyValidationError && (
-                            <p className="text-[10px] text-red-500 font-bold mt-1 ml-1">{keyValidationError}</p>
-                          )}
-                          {isKeyValid === true && (
-                            <p className="text-[10px] text-emerald-600 font-bold mt-1 ml-1">✓ Clé API valide et prête à l'emploi</p>
-                          )}
-                          
-                          <div className="flex items-center gap-2 mt-3 ml-1">
-                            <button 
-                              onClick={() => setSaveApiKey(!saveApiKey)}
-                              className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${saveApiKey ? 'bg-[#FF4D00] border-[#FF4D00]' : 'border-black/20 bg-white'}`}
-                            >
-                              {saveApiKey && <CheckCircle className="w-3 h-3 text-white" />}
-                            </button>
-                            <span className="text-xs text-black/70 font-medium cursor-pointer" onClick={() => setSaveApiKey(!saveApiKey)}>
-                              Sauvegarder la clé (localStorage)
-                            </span>
-                          </div>
-                        </div>
-                      </div>
+                      <ApiKeyConfig 
+                        apiKey={apiKey}
+                        setApiKey={setApiKey}
+                        saveApiKey={saveApiKey}
+                        setSaveApiKey={setSaveApiKey}
+                        onValidationChange={setIsKeyValid}
+                      />
                     )}
 
                     {isAdmin && (
@@ -1246,8 +1102,36 @@ export default function App() {
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div 
-                        onClick={() => fileInputRef.current?.click()}
-                        className="border-2 border-dashed border-black/10 rounded-2xl p-4 cursor-pointer hover:border-[#FF4D00]/30 transition-colors group flex flex-col items-center justify-center text-center relative overflow-hidden min-h-[160px]"
+                        onClick={() => {
+                          // Bloquer le clic d'import si un dysfonctionnement de l'iframe est identifié
+                          if (iframeCookieBlocked) return;
+                          fileInputRef.current?.click();
+                        }}
+                        onDragOver={(e) => {
+                          // Bloquer le drag si un dysfonctionnement de l'iframe est identifié
+                          if (iframeCookieBlocked) return;
+                          handleDragOver(e, 'target');
+                        }}
+                        onDragLeave={(e) => {
+                          // Bloquer le leave si un dysfonctionnement de l'iframe est identifié
+                          if (iframeCookieBlocked) return;
+                          handleDragLeave(e, 'target');
+                        }}
+                        onDrop={(e) => {
+                          // Bloquer la dépose si un dysfonctionnement de l'iframe est identifié
+                          if (iframeCookieBlocked) return;
+                          handleDrop(e, 'target');
+                        }}
+                        className={`border-2 border-dashed rounded-2xl p-4 transition-all duration-200 group flex flex-col items-center justify-center text-center relative overflow-hidden min-h-[160px] ${
+                          // Style d'atténuation si l'iframe restreint les cookies
+                          iframeCookieBlocked
+                            ? 'border-gray-200 bg-gray-50/50 cursor-not-allowed opacity-40'
+                            : 'cursor-pointer'
+                        } ${
+                          !iframeCookieBlocked && isDraggingTarget 
+                            ? 'border-[#FF4D00] bg-[#FF4D00]/5 scale-[1.02] shadow-sm' 
+                            : !iframeCookieBlocked ? 'border-black/10 hover:border-[#FF4D00]/30' : ''
+                        }`}
                       >
                         <input 
                           type="file" 
@@ -1275,25 +1159,56 @@ export default function App() {
                           </div>
                         ) : (
                           <>
-                            <Upload className="w-8 h-8 mb-2 text-black/20 group-hover:text-[#FF4D00] transition-colors" />
+                            <Upload className={`w-8 h-8 mb-2 transition-colors ${isDraggingTarget ? 'text-[#FF4D00]' : 'text-black/20 group-hover:text-[#FF4D00]'}`} />
                             <p className="text-[10px] font-bold uppercase tracking-widest text-black/40 mb-1">Vidéo Cible</p>
-                            <p className="text-[10px] font-medium text-black/20">Choisir la vidéo</p>
+                            <p className="text-[10px] font-medium text-black/20">
+                              {isDraggingTarget ? 'Déposez le fichier ici' : 'Choisir ou glisser la vidéo'}
+                            </p>
                           </>
                         )}
                       </div>
 
                       <div 
                         onClick={() => {
-                          const input = document.createElement('input');
-                          input.type = 'file';
-                          input.accept = 'video/*';
-                          input.onchange = handleRefFileChange;
-                          input.click();
+                          // Bloquer l'action si les cookies de l'iframe sont bloqués de manière proactive
+                          if (iframeCookieBlocked) return;
+                          refFileInputRef.current?.click();
                         }}
-                        className={`border-2 border-dashed rounded-2xl p-4 cursor-pointer transition-colors group flex flex-col items-center justify-center text-center relative overflow-hidden min-h-[160px] ${
-                          refFile ? 'border-[#FF4D00]/30 bg-[#FF4D00]/5' : 'border-black/10 hover:border-black/30'
+                        onDragOver={(e) => {
+                          // Bloquer le drag si les cookies de l'iframe sont bloqués de manière proactive
+                          if (iframeCookieBlocked) return;
+                          handleDragOver(e, 'ref');
+                        }}
+                        onDragLeave={(e) => {
+                          // Bloquer le leave si les cookies de l'iframe sont bloqués de manière proactive
+                          if (iframeCookieBlocked) return;
+                          handleDragLeave(e, 'ref');
+                        }}
+                        onDrop={(e) => {
+                          // Bloquer la dépose si les cookies de l'iframe sont bloqués de manière proactive
+                          if (iframeCookieBlocked) return;
+                          handleDrop(e, 'ref');
+                        }}
+                        className={`border-2 border-dashed rounded-2xl p-4 transition-all duration-200 group flex flex-col items-center justify-center text-center relative overflow-hidden min-h-[160px] ${
+                          // Style d'atténuation si l'iframe restreint les cookies
+                          iframeCookieBlocked
+                            ? 'border-gray-200 bg-gray-50/50 cursor-not-allowed opacity-40'
+                            : 'cursor-pointer'
+                        } ${
+                          !iframeCookieBlocked && isDraggingRef 
+                            ? 'border-[#FF4D00] bg-[#FF4D00]/5 scale-[1.02] shadow-sm' 
+                            : !iframeCookieBlocked && refFile 
+                              ? 'border-[#FF4D00]/30 bg-[#FF4D00]/5 hover:border-[#FF4D00]/50'
+                              : !iframeCookieBlocked ? 'border-black/10 hover:border-black/30' : ''
                         }`}
                       >
+                        <input 
+                          type="file" 
+                          ref={refFileInputRef} 
+                          onChange={handleRefFileChange} 
+                          className="hidden" 
+                          accept="video/*"
+                        />
                         {refPreview ? (
                           <div className="absolute inset-0 bg-black">
                             <video src={refPreview} className="w-full h-full object-cover opacity-60" muted />
@@ -1313,9 +1228,11 @@ export default function App() {
                           </div>
                         ) : (
                           <>
-                            <Video className={`w-8 h-8 mb-2 transition-colors ${refFile ? 'text-[#FF4D00]' : 'text-black/20 group-hover:text-black/40'}`} />
+                            <Video className={`w-8 h-8 mb-2 transition-colors ${isDraggingRef || refFile ? 'text-[#FF4D00]' : 'text-black/20 group-hover:text-black/40'}`} />
                             <p className="text-[10px] font-bold uppercase tracking-widest text-black/40 mb-1">Vidéo Référence</p>
-                            <p className="text-[10px] font-medium text-black/20">Copier le style</p>
+                            <p className="text-[10px] font-medium text-black/20">
+                              {isDraggingRef ? 'Déposez le fichier ici' : 'Copier le style d\'une autre vidéo'}
+                            </p>
                           </>
                         )}
                       </div>
@@ -1346,202 +1263,14 @@ export default function App() {
                     </div>
 
                     {/* Subtitle Style Selection */}
-                    <div className="flex flex-col gap-3">
-                      <div className="flex justify-between items-center">
-                        <p className="text-xs font-bold uppercase tracking-widest text-black/40 text-left">Style des sous-titres</p>
-                        <button 
-                          onClick={() => setShowStyleEditor(!showStyleEditor)}
-                          className={`text-[10px] font-bold flex items-center gap-1 transition-colors ${showStyleEditor ? 'text-[#FF4D00]' : 'text-black/40 hover:text-[#FF4D00]'}`}
-                        >
-                          <Settings2 className="w-3 h-3" />
-                          {showStyleEditor ? 'Fermer l\'éditeur' : 'Personnaliser'}
-                        </button>
-                      </div>
-                      
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        {Object.entries(PRESET_STYLES).map(([id, preset]) => (
-                          <button
-                            key={id}
-                            onClick={() => {
-                              setSelectedPreset(id);
-                              setCustomStyle(preset.style);
-                              setShowStyleEditor(false);
-                            }}
-                            className={`py-2 px-2 text-[10px] font-bold rounded-lg border transition-all flex flex-col items-center gap-1 ${
-                              selectedPreset === id && !showStyleEditor
-                                ? 'bg-black text-white border-black' 
-                                : 'bg-white border-black/10 text-black/60 hover:border-black/30'
-                            }`}
-                          >
-                            <span>{preset.name}</span>
-                            <div 
-                              className="w-full h-1 rounded-full" 
-                              style={{ backgroundColor: preset.style.primaryColor, border: `1px solid ${preset.style.outlineColor}` }}
-                            />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Style Editor Panel */}
-                    <AnimatePresence>
-                      {showStyleEditor && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="bg-black/5 p-5 rounded-2xl border border-black/5 space-y-4">
-                            <div className="flex justify-between items-center border-b border-black/5 pb-2">
-                              <h4 className="text-xs font-bold uppercase tracking-widest text-black/60 flex items-center gap-2">
-                                <Palette className="w-3 h-3" /> Éditeur de Style
-                              </h4>
-                              <button onClick={() => setShowStyleEditor(false)} className="text-black/40 hover:text-black">
-                                <X className="w-3 h-3" />
-                              </button>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                              <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-black/40 uppercase">Couleur Principale</label>
-                                <div className="flex items-center gap-2">
-                                  <input 
-                                    type="color" 
-                                    value={customStyle.primaryColor}
-                                    onChange={(e) => {
-                                      setCustomStyle({...customStyle, primaryColor: e.target.value});
-                                      setSelectedPreset('custom');
-                                    }}
-                                    className="w-8 h-8 rounded cursor-pointer bg-transparent"
-                                  />
-                                  <span className="text-[10px] font-mono">{customStyle.primaryColor}</span>
-                                </div>
-                              </div>
-                              <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-black/40 uppercase">Couleur Contour</label>
-                                <div className="flex items-center gap-2">
-                                  <input 
-                                    type="color" 
-                                    value={customStyle.outlineColor}
-                                    onChange={(e) => {
-                                      setCustomStyle({...customStyle, outlineColor: e.target.value});
-                                      setSelectedPreset('custom');
-                                    }}
-                                    className="w-8 h-8 rounded cursor-pointer bg-transparent"
-                                  />
-                                  <span className="text-[10px] font-mono">{customStyle.outlineColor}</span>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                              <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-black/40 uppercase flex items-center gap-1">
-                                  <Type className="w-2 h-2" />
-                                  Taille Police ({customStyle.fontSize}px)
-                                </label>
-                                <input 
-                                  type="range" min="12" max="72" step="1"
-                                  value={customStyle.fontSize}
-                                  onChange={(e) => {
-                                    setCustomStyle({...customStyle, fontSize: parseInt(e.target.value)});
-                                    setSelectedPreset('custom');
-                                  }}
-                                  className="w-full h-1 bg-black/10 rounded-lg appearance-none cursor-pointer accent-[#FF4D00]"
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-black/40 uppercase">Police</label>
-                                <select 
-                                  value={customStyle.fontName}
-                                  onChange={(e) => {
-                                    setCustomStyle({...customStyle, fontName: e.target.value});
-                                    setSelectedPreset('custom');
-                                  }}
-                                  className="w-full p-2 bg-white border border-black/10 rounded-lg text-[10px] focus:outline-none"
-                                >
-                                  <option value="Arial">Arial</option>
-                                  <option value="Roboto">Roboto</option>
-                                  <option value="Consolas">Consolas</option>
-                                  <option value="Verdana">Verdana</option>
-                                  <option value="Impact">Impact</option>
-                                  <option value="Arial Black">Arial Black</option>
-                                </select>
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                              <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-black/40 uppercase flex items-center gap-1">
-                                  <AlignCenter className="w-2 h-2" />
-                                  Alignement
-                                </label>
-                                <div className="grid grid-cols-3 gap-1">
-                                  {[7, 8, 9, 4, 5, 6, 1, 2, 3].map(pos => (
-                                    <button
-                                      key={pos}
-                                      onClick={() => {
-                                        setCustomStyle({...customStyle, alignment: pos});
-                                        setSelectedPreset('custom');
-                                      }}
-                                      className={`p-1 border rounded transition-colors flex items-center justify-center ${customStyle.alignment === pos ? 'bg-[#FF4D00] border-[#FF4D00] text-white' : 'bg-white border-black/10 text-black/40 hover:border-black/30'}`}
-                                      title={`Alignement ${pos}`}
-                                    >
-                                      <div className={`w-2 h-2 bg-current rounded-sm ${pos === 2 ? 'mb-0.5' : ''}`} />
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                              <div className="space-y-2">
-                                <div className="space-y-1">
-                                  <label className="text-[10px] font-bold text-black/40 uppercase">Ombre ({customStyle.shadow}px)</label>
-                                  <input 
-                                    type="range" min="0" max="10" step="0.5"
-                                    value={customStyle.shadow}
-                                    onChange={(e) => {
-                                      setCustomStyle({...customStyle, shadow: parseFloat(e.target.value)});
-                                      setSelectedPreset('custom');
-                                    }}
-                                    className="w-full h-1 bg-black/10 rounded-lg appearance-none cursor-pointer accent-[#FF4D00]"
-                                  />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <label className="text-[10px] font-bold text-black/40 uppercase">Fond Opaque</label>
-                                  <button 
-                                    onClick={() => {
-                                      setCustomStyle({...customStyle, backgroundStyle: customStyle.backgroundStyle === 'none' ? 'semi-transparent-box' : 'none'});
-                                      setSelectedPreset('custom');
-                                    }}
-                                    className={`w-10 h-5 rounded-full relative transition-colors ${customStyle.backgroundStyle === 'semi-transparent-box' ? 'bg-[#FF4D00]' : 'bg-black/20'}`}
-                                  >
-                                    <motion.div 
-                                      animate={{ x: customStyle.backgroundStyle === 'semi-transparent-box' ? 22 : 2 }}
-                                      className="absolute top-1 w-3 h-3 bg-white rounded-full shadow-sm"
-                                    />
-                                  </button>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <label className="text-[10px] font-bold text-black/40 uppercase">Animation Fondu</label>
-                                  <button 
-                                    onClick={() => {
-                                      setCustomStyle({...customStyle, animation: customStyle.animation === 'none' ? 'fade' : 'none'});
-                                      setSelectedPreset('custom');
-                                    }}
-                                    className={`w-10 h-5 rounded-full relative transition-colors ${customStyle.animation === 'fade' ? 'bg-[#FF4D00]' : 'bg-black/20'}`}
-                                  >
-                                    <motion.div 
-                                      animate={{ x: customStyle.animation === 'fade' ? 22 : 2 }}
-                                      className="absolute top-1 w-3 h-3 bg-white rounded-full shadow-sm"
-                                    />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                    <StyleEditor 
+                      selectedPreset={selectedPreset}
+                      setSelectedPreset={setSelectedPreset}
+                      customStyle={customStyle}
+                      setCustomStyle={setCustomStyle}
+                      showStyleEditor={showStyleEditor}
+                      setShowStyleEditor={setShowStyleEditor}
+                    />
 
                     <button
                       disabled={!file}
@@ -1812,10 +1541,59 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="mt-20 border-t border-black/5 p-8 text-center text-[10px] text-black/30 uppercase tracking-[0.2em] space-y-2">
-        <p>Propulsé par Google Gemini & FFmpeg • 2026 EcoSub AI</p>
-        <p className="font-bold">Created by Horacio CHINKOUN</p>
+      <footer className="mt-20 border-t border-black/5 p-8 text-center text-[10px] text-black/30 uppercase tracking-[0.2em] space-y-4">
+        <div>
+          <p className="mb-2">Propulsé par Google Gemini & FFmpeg • 2026 EcoSub AI</p>
+          <p className="font-bold">
+            Created by Horacio CHINKOUN •{' '}
+            <button 
+              onClick={() => setShowVersionsHistory(true)} 
+              className="hover:text-[#FF4D00] transition-colors hover:underline font-bold tracking-widest cursor-pointer inline-flex items-center gap-1 uppercase"
+            >
+              Notes de version ({CURRENT_VERSION})
+            </button> •{' '}
+            <button 
+              onClick={() => setShowMyData(true)} 
+              className="hover:text-[#FF4D00] transition-colors hover:underline font-bold tracking-widest cursor-pointer inline-flex items-center gap-1 uppercase font-mono"
+              id="manage-my-data-btn"
+            >
+              Gérer mes données
+            </button>
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 font-bold opacity-70">
+          <button onClick={() => setActiveLegalDoc('cgu')} className="hover:text-black transition-colors focus:outline-none">CGU</button>
+          <span className="opacity-30">•</span>
+          <button onClick={() => setActiveLegalDoc('privacy')} className="hover:text-black transition-colors focus:outline-none">Confidentialité</button>
+          <span className="opacity-30">•</span>
+          <button onClick={() => setActiveLegalDoc('legal')} className="hover:text-black transition-colors focus:outline-none">Mentions Légales</button>
+        </div>
       </footer>
+
+      {/* PWA Widgets Globaux */}
+      <VersionManager />
+      <PwaInstallButton />
+      
+      {/* Historique complet des Changelogs */}
+      <ChangelogModal 
+        isOpen={showVersionsHistory} 
+        onClose={() => setShowVersionsHistory(false)} 
+        version={CURRENT_VERSION} 
+        showAll={true} 
+      />
+
+      {/* Espace Données Personnelles et RGPD */}
+      <MyDataModal 
+        isOpen={showMyData}
+        onClose={() => setShowMyData(false)}
+      />
+
+      {/* Affichage des documents légaux */}
+      <LegalModal 
+        isOpen={activeLegalDoc !== null}
+        onClose={() => setActiveLegalDoc(null)}
+        documentId={activeLegalDoc || 'cgu'}
+      />
     </div>
     </ErrorBoundary>
   );
