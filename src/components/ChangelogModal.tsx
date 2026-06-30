@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { APP_VERSIONS, CURRENT_VERSION } from '../data/versions';
 import { X, Calendar, Info, ShieldAlert, Sparkles, Check } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useModalBackHandler } from '../lib/navigation';
 
 interface ChangelogModalProps {
   isOpen: boolean;
@@ -12,6 +13,8 @@ interface ChangelogModalProps {
 
 export function ChangelogModal({ isOpen, onClose, version = CURRENT_VERSION, showAll = false }: ChangelogModalProps) {
   const [activeTab, setActiveTab] = useState<'latest' | 'history'>(showAll ? 'history' : 'latest');
+  
+  useModalBackHandler(isOpen, onClose, 'changelog-modal');
 
   if (!isOpen) return null;
 

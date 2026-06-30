@@ -9,6 +9,7 @@ import { auth, db } from '../firebase';
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, where } from 'firebase/firestore';
 import { getVideos, deleteVideo, initDB, StoredVideo } from '../utils/storage';
 import { deleteUser } from 'firebase/auth';
+import { useModalBackHandler } from '../lib/navigation';
 
 interface MyDataModalProps {
   isOpen: boolean;
@@ -22,6 +23,8 @@ interface DataLog {
 }
 
 export function MyDataModal({ isOpen, onClose }: MyDataModalProps) {
+  useModalBackHandler(isOpen, onClose, 'my-data-modal');
+  
   // --- États locaux ---
   const [loading, setLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);

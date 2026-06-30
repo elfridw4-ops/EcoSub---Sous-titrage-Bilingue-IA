@@ -21,13 +21,15 @@ Pour dynamiser le trafic en provenance des réseaux sociaux (LinkedIn, X/Twitter
 <meta property="og:type" content="website" />
 <meta property="og:title" content="EcoSub AI - Incrustation et Génération de Sous-Titres par IA" />
 <meta property="og:description" content="Générez, personnalisez et incrustez des sous-titres sur vos vidéos en un temps record." />
-<meta property="og:image" content="https://ecosub.ai/og-image.jpg" />
-<meta property="og:url" content="https://ecosub.ai" />
+<meta property="og:image" content="https://ais-pre-52xdkcj2m33euadjfahqxo-156867150624.europe-west1.run.app/icons/social-card-og-1200x630.png" />
+<meta property="og:url" content="https://ais-pre-52xdkcj2m33euadjfahqxo-156867150624.europe-west1.run.app" />
 
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="EcoSub AI - Générateur de Sous-Titres" />
 <meta name="twitter:description" content="Sous-titrage intelligent et copie de style vidéo par référence." />
 ```
+
+> ⚠️ **Note de pré-déploiement :** En phase de test et pré-production, l'URL Open Graph (`og:url`) et l'URL canonique pointent vers l'URL active de prévisualisation afin de garantir des cartes d'aperçu de partage 100 % opérationnelles. De plus, un adaptateur JavaScript dynamique a été injecté dans `<head>` afin de synchroniser automatiquement ces metas avec l'origine de l'application (`window.location.origin`) dès la mise en ligne finale sur le nom de domaine ou Vercel.
 
 ### C. Données Structurées JSON-LD (Schema.org)
 Pour maximiser les chances d'apparaître sous forme de "rich snippets" (extraits enrichis) de type SoftwareApplication ou WebApplication :

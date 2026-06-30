@@ -19,9 +19,9 @@
     <meta property="og:site_name" content="EcoSub AI" />
     <meta property="og:title" content="EcoSub AI - Sous-titres Vidéo par Intelligence Artificielle" />
     <meta property="og:description" content="Générez, traduisez et incrustez des sous-titres pro sur vos vidéos instantanément avec l'IA. Style Netflix, YouTube, TikTok à portée de clic." />
-    <meta property="og:url" content="https://ecosub.ai" />
-    <meta property="og:image" content="https://ais-pre-52xdkcj2m33euadjfahqxo-156867150624.europe-west1.run.app/icons/social-card-og-1200x630.png" />
-    <meta property="og:image:secure_url" content="https://ais-pre-52xdkcj2m33euadjfahqxo-156867150624.europe-west1.run.app/icons/social-card-og-1200x630.png" />
+    <meta property="og:url" content="https://ecosub.ai/" />
+    <meta property="og:image" content="https://ecosub.ai/icons/social-card-og-1200x630.png" />
+    <meta property="og:image:secure_url" content="https://ecosub.ai/icons/social-card-og-1200x630.png" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
@@ -31,14 +31,56 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="EcoSub AI - Sous-titres Vidéo par Intelligence Artificielle" />
     <meta name="twitter:description" content="Incrustez vos sous-titres vidéo avec des styles magnifiques directement via IA." />
-    <meta name="twitter:image" content="https://ais-pre-52xdkcj2m33euadjfahqxo-156867150624.europe-west1.run.app/icons/social-card-twitter-1500x500.png" />
+    <meta name="twitter:image" content="https://ecosub.ai/icons/social-card-twitter-1500x500.png" />
 
     <!-- PWA & Mobile Optimization -->
     <meta name="theme-color" content="#FDFCFB" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="EcoSub AI" />
-    <link rel="canonical" href="https://ecosub.ai" />
+    <link rel="canonical" id="canonical-link" href="https://ecosub.ai/" />
+    
+    <script>
+      // Adaptateur de partage de domaine automatique pour PWA et Scrapers
+      (function() {
+        try {
+          var currentOrigin = window.location.origin;
+          if (currentOrigin && currentOrigin.indexOf('localhost') === -1 && currentOrigin !== 'https://ecosub.ai') {
+            // Mettre à jour l'URL canonique dynamiquement
+            var canon = document.getElementById('canonical-link');
+            if (canon) canon.setAttribute('href', currentOrigin);
+
+            // Mettre à jour l'URL Open Graph
+            var ogUrl = document.querySelector('meta[property="og:url"]');
+            if (ogUrl) ogUrl.setAttribute('content', currentOrigin);
+          }
+        } catch(e) {
+          console.error("Erreur de mise à jour dynamique du domaine de partage :", e);
+        }
+      })();
+    </script>
+    
+    <!-- Structured Data (JSON-LD) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "EcoSub AI",
+      "url": "https://ecosub.ai/",
+      "applicationCategory": "MultimediaApplication",
+      "operatingSystem": "All",
+      "description": "Générez et incrustez des sous-titres professionnels sur vos vidéos en quelques secondes grâce à l'IA de Gemini.",
+      "offers": {
+        "@type": "Offer",
+        "price": "0.00",
+        "priceCurrency": "EUR"
+      },
+      "creator": {
+        "@type": "Person",
+        "name": "Horacio CHINKOUN"
+      }
+    }
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -263,6 +263,7 @@ export default function LandingPage({ onStart, onOpenLegal }: LandingPageProps) 
           <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
             <button onClick={() => onOpenLegal && onOpenLegal('cgu')} className="hover:text-gray-900 transition-colors focus:outline-none">CGU</button>
             <button onClick={() => onOpenLegal && onOpenLegal('privacy')} className="hover:text-gray-900 transition-colors focus:outline-none">Confidentialité</button>
+            <button onClick={() => onOpenLegal && onOpenLegal('cookies')} className="hover:text-gray-900 transition-colors focus:outline-none">Cookies</button>
             <button onClick={() => onOpenLegal && onOpenLegal('legal')} className="hover:text-gray-900 transition-colors focus:outline-none">Mentions Légales</button>
           </div>
         </div>

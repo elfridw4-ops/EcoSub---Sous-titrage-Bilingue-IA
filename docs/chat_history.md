@@ -368,3 +368,56 @@ J'ai rédigé les documents juridiques validés et je les ai intégrés à l'int
    - Mise à jour de la base documentaire complète pour les développeurs.
 
 ---
+
+[2026-06-17]
+Utilisateur :
+Le texte est bien édité.
+Le formatage est mal fait, c'est brut.
+Le contenu des mentions légales est court.
+Elles ne sont pas détaillées.
+
+Assistant :
+J'ai remanié la forme et enrichi le fond de l'ensemble des documents juridiques :
+1. **Fichiers modifiés** :
+   - `/src/components/legal/legalContent.ts`
+2. **Résumé des changements** :
+   - **Enrichissement des Mentions Légales** : Ajout de cinq sections détaillées couvrant l'identification de l'éditeur indépendant, les coordonnées complètes de l'hébergeur public (Google Ireland Limited), une clause de Propriété Intellectuelle distinguant fermement le code source des fichiers utilisateurs, et la définition explicite du Droit et Juridiction applicable.
+   - **Formatage Typographique Amélioré** : Application stricte du formatage Markdown enrichi (titres, listes à puces, séparateurs thématiques, tableaux de données, blocs de citations en exergue pour la tarification Google, texte gras) afin de garantir une apparence très professionnelle au sein du modal React.
+   - Restructuration syntaxique pour assurer une fluidité de lecture optimale, avec de l'espacement aéré et structurel entre chaque paragraphe légal.
+
+---
+
+[2026-06-17]
+Utilisateur :
+Analyser complètement la gestion du bouton Retour sur mobile. Empêcher la fermeture involontaire de l'application (modales, menus, et appui double pour quitter).
+
+Assistant :
+L'audit a révélé que la SPA React n'était pas protégée contre les retours natifs :
+1. **Cause exacte du problème** : Les interfaces basées sur React `useState` ne s'inscrivent pas dans la pile `History API` (historique) native du navigateur. Appuyer sur "Retour" ignorait React et forçait le navigateur à fermer l'application/fenêtre purement et simplement, sans fermer les modales affichées.
+2. **Fichiers modifiés** :
+   - `/src/lib/navigation.ts` (Création) : Un système centralisé qui intercepte l'événement `popstate`.
+   - `/src/App.tsx` : Intégration de l'anti-fermeture.
+   - `/src/components/ChangelogModal.tsx`, `/src/components/MyDataModal.tsx`, `/src/components/legal/LegalModal.tsx` : Appel du hook.
+3. **Corrections proposées et effectuées chirurgicalement** :
+   - Mise en place d'une gestion de pile en mémoire (LIFO) corrélée à un faux état historique (`history.pushState`).
+   - L'ouverture d'une modale génère un point d'historique factice interdisant la sortie.
+   - Si la page d'accueil de l'application est atteinte, l'appui "Retour" affiche le Toast *Appuyez à nouveau pour quitter*. Une seconde action sous 2 secondes entraîne la fermeture réelle.
+   - Persistance sécurisée des états et saisies en arrière-plan (l'application n'est jamais démontée).
+4. **Risques éventuels** : Conflits locaux possibles avec certains in-app browsers invasifs (type Facebook Mobile Browser) qui modifient le comportement strict de la *History API*.
+
+---
+
+[2026-06-17]
+Utilisateur :
+Lors du partage c’est ce lien qui s’affiche : https://ecosub.ai/ or https://ais-pre-52xdkcj2m33euadjfahqxo-156867150624.europe-west1.run.app est le vrai lien de partage avant deploiement sur vercel puis achat d'un nom de domaine
+
+Assistant :
+J'ai détecté que les balises canonical et Open Graph de `index.html` contenaient en dur `https://ecosub.ai`. Lors du scraping (WhatsApp, iMessage, Slack), cela forçait l'aperçu à pointer vers la cible finale indisponible.
+1. **Fichiers modifiés** :
+   - `/index.html` : Remplacement par l'URL active de prévisualisation AI Studio.
+   - `/docs/seo.md` & `/seo.md` : Documentation de la stratégie d'adaptation.
+2. **Résumé des changements** :
+   - Utilisation de l'adresse de préproduction pour que les partages soient 100 % opérationnels dès aujourd'hui.
+   - Injection d'un adaptateur JavaScript dynamique dans l'en-tête pour adapter à la volée `canonical` et `og:url` selon `window.location.origin` lors d'un déploiement sur tout autre domaine à l'avenir.
+
+---

@@ -20,6 +20,7 @@ import { LegalModal } from './components/legal/LegalModal';
 import { LegalDocumentId } from './components/legal/legalContent';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, arrayUnion, onSnapshot, collection, getDocs, increment } from 'firebase/firestore';
+import { useExitAppPrompt, useModalBackHandler } from './lib/navigation';
 
 enum OperationType {
   CREATE = 'create',
@@ -145,6 +146,12 @@ export default function App() {
   const [showVersionsHistory, setShowVersionsHistory] = useState(false);
   const [showMyData, setShowMyData] = useState(false);
   const [activeLegalDoc, setActiveLegalDoc] = useState<LegalDocumentId | null>(null);
+  
+  // Handlers pour le bouton de retour matériel (Android) / gestes PWA
+  const { showExitPrompt } = useExitAppPrompt();
+  useModalBackHandler(showAdminDash, () => setShowAdminDash(false), 'admin-dash');
+  useModalBackHandler(showStyleEditor, () => setShowStyleEditor(false), 'style-editor');
+  useModalBackHandler(showApiKeyConfig, () => setShowApiKeyConfig(false), 'api-key-config');
   
   // Répérage de la présence au sein d'une Iframe
   const isIframe = window.self !== window.top;
@@ -1566,6 +1573,8 @@ export default function App() {
           <span className="opacity-30">•</span>
           <button onClick={() => setActiveLegalDoc('privacy')} className="hover:text-black transition-colors focus:outline-none">Confidentialité</button>
           <span className="opacity-30">•</span>
+          <button onClick={() => setActiveLegalDoc('cookies')} className="hover:text-black transition-colors focus:outline-none">Cookies</button>
+          <span className="opacity-30">•</span>
           <button onClick={() => setActiveLegalDoc('legal')} className="hover:text-black transition-colors focus:outline-none">Mentions Légales</button>
         </div>
       </footer>
@@ -1594,6 +1603,20 @@ export default function App() {
         onClose={() => setActiveLegalDoc(null)}
         documentId={activeLegalDoc || 'cgu'}
       />
+
+      {/* Toast PWA "Appuyez à nouveau pour quitter" */}
+      <AnimatePresence>
+        {showExitPrompt && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 50, scale: 0.9 }}
+            className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[200] bg-black text-white px-6 py-3 rounded-full shadow-xl shadow-black/20 text-sm font-bold tracking-wide"
+          >
+            Appuyez à nouveau pour quitter
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
     </ErrorBoundary>
   );

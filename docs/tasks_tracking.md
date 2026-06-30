@@ -38,6 +38,7 @@
 - [x] Correction de l'erreur réseau "Le téléchargement a échoué (0): Network Error" liée à l'interdiction par les navigateurs d'inclure des cookies/identifiants tiers dans des iframes isolées (retrait de withCredentials et credentials:'include' sur tous les appels d'API, le backend étant de fait entièrement sans état).
 - [x] Analyse et établissement du Plan Directeur Légale suite aux retours de l'audit externe de Perplexity (CGU, Confidentialité, Mentions légales).
 - [x] Phase de Rédaction : Création de `legalContent.ts` encodant les Conditions d'utilisation structurées (incluant l'exonération d'hallucinations IA), la Politique de Confidentialité (incluant le fonctionnement BYOK/Google AI Studio et cycle des données) et les Mentions Légales.
+- [x] Remaniement Typographique Légale : Application du formatage Markdown avancé aux documents juridiques (titres, listes structurées, tableaux, sections de citations) et enrichissement massif des Mentions Légales (P.I. et Hébergement).
 - [x] Intégration UX : Implémentation du composant dynamique React `LegalModal.tsx` et mise à jour des footers de l'application (Landing Page et Dashboard) pour relier les documents.
 
 ## Tâches en cours
@@ -46,5 +47,7 @@
 - [x] Conception et intégration de la bannière et des bulles d'aide interactives spécifiques à Safari iOS pour l'installation manuelle.
 - [x] Conception et validation de la Landing Page d'EcoSub AI (Audit produit, Rédaction de la proposition de valeur, validation UX et implémentation finale).
 - [x] Documentation complète du projet (Initialisation, stratégie SEO, charte graphique avancée, index d'architecture d'onboarding, et audit de conformité PWA).
+- [x] Conception du contrôleur des retours virtuels pour intercepter le bouton Retour d'Android (NavigationManager/HistoryAPI, double-tap-to-exit pour PWA).
+- [x] Résolution de l'URL de partage et Open Graph en préproduction : Remplacement de l'adresse codée en dur par l'URL active de prévisualisation et injection d'un adaptateur automatique par JavaScript.
 - [ ] Optimisation de la taille des fichiers FFmpeg.
 - [ ] Support de formats vidéo supplémentaires.

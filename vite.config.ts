@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
       react(),
       tailwindcss(),
       VitePWA({
-        registerType: 'autoUpdate',
+        registerType: 'prompt',
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg}'],
         },
@@ -22,6 +22,8 @@ export default defineConfig(({ mode }) => {
           theme_color: '#FDFCFB',
           background_color: '#FDFCFB',
           display: 'standalone',
+          orientation: 'portrait-primary',
+          categories: ['utilities', 'productivity', 'photo', 'video'],
           start_url: '/',
           scope: '/',
           icons: [

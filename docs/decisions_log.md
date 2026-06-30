@@ -120,5 +120,29 @@
 - **Conséquences** : Protection légale maximale de l'éditeur contre la création/propagation de contenus mensongers ou préjudiciables générés par IA. Assurance de transparence absolue sur le cycle de vie des API Keys personnelles (BYOK).
 
 
+## Refonte des Documents Légaux et Conception de la Modale Interactive Dual-Pane (Sommaire)
+- **Date** : 2026-06-25
+- **Contexte** : Les documents légaux d'une application (CGU, Politique de Confidentialité, Mentions Légales) sont denses et souvent indigestes en texte brut. Pour assurer une transparence conforme au RGPD et à l'EU AI Act tout en maintenant un taux d'attention et d'acceptabilité élevé des testeurs et utilisateurs finaux, la présentation se devait d'être soignée, aérée et interactive. De plus, une Politique de Cookies explicite était requise pour traiter la question du stockage local et des cookies tiers d'iframes.
+- **Décision** :
+  1. Diviser les documents en sections thématiques distinctes dotées d'identifiants uniques dans `legalContent.ts`.
+  2. Ajouter un quatrième document légal complet : la politique de gestion des cookies techniques et locaux (`cookies`).
+  3. Intégrer une table des matières (ToC) interactive dans la `LegalModal.tsx` :
+     - **Sur desktop** : Un volet latéral de navigation par ancres fluides avec indicateur de section active en temps réel lors du défilement (Scroll Tracking).
+     - **Sur mobile** : Une barre horizontale de boutons numérotés pour un accès tactile direct aux différents chapitres.
+  4. Mettre en valeur la date de dernière révision et le point de contact direct d'aide légale (`elfridw4@gmail.com`).
+- **Alternatives envisagées** : Rendu simple en un seul bloc markdown défilant (rejeté car peu engageant pour l'utilisateur final et difficile d'accès).
+- **Conséquences** : Amélioration drastique de la clarté et du design légal. Expérience utilisateur moderne sans surcharge cognitive. Conformité légale solide avec traçabilité optimale de l'ensemble des données collectées ou stockées en local.
+
+
+## Résolution de l'URL de partage et Open Graph en préproduction
+- **Date** : 2026-06-17
+- **Contexte** : Avant le déploiement sur Vercel et l'achat du nom de domaine `ecosub.ai`, le partage d'URL de test (sur WhatsApp, Slack, LinkedIn, etc.) générait des cartes d'aperçu défectueuses pointant vers `https://ecosub.ai` car les balises canonical et Open Graph étaient codées en dur avec ce domaine final non encore en ligne.
+- **Décision** :
+  1. Remplacer l'URL codée en dur par l'URL de prévisualisation active de test (`https://ais-pre-52xdkcj2m33euadjfahqxo-156867150624.europe-west1.run.app`) dans `index.html`.
+  2. Injecter un adaptateur JavaScript asynchrone dynamique dans la balise `<head>` pour mettre à jour à la volée `canonical` et `og:url` en se basant sur le domaine de connexion actuel (`window.location.origin`).
+- **Alternatives envisagées** : Laisser l'adresse en dur sur ecosub.ai (rejeté car cela cassait les partages et les retours d'utilisateurs testeurs en préproduction).
+- **Conséquences** : Cartes d'aperçu de partage 100% opérationnelles dès l'environnement de test tout en s'adaptant automatiquement et sans intervention de fichier au domaine final de production à l'achat du domaine.
+
+
 
 
